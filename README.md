@@ -21,6 +21,17 @@ synthesized transient grid. It does **not** run the downstream NLOS solver.
 The final volumetric images shown in the paper were obtained by subsequently
 running LCT or RSD, as specified in the paper and in `DATA_AND_RESULTS.md`.
 
+## Deformable research extension
+
+A separate [time-dependent axis-scaling extension](deformable_gtr/README.md)
+adds a shared canonical Gaussian scene, isotropic or anisotropic expansion,
+finite-exposure motion compensation, and joint fitting. Run
+`python deformable_train.py demo` for a small CPU synthetic validation.
+The extension reuses this repository's renderer and supports original checkpoints
+as canonical initializations. It has its own timed data format and dynamic
+checkpoints; the original static training/output commands remain available.
+See the extension documentation for its assumptions and validation limits.
+
 ## Repository layout
 
 | Path | Purpose |

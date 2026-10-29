@@ -4,7 +4,34 @@ import math
 
 import torch
 import torch.nn as nn
-from triton_timekernel import time_kernel_and_reduce_triton_fullG
+
+
+def reduce_time_kernels(amplitude, mean, std, time_bins, backend='auto', chunk_size=256):
+    """Preserve the released kernel on CUDA; provide an exact small CPU reference.
+
+    The Torch branch uses the same unnormalized Gaussian as the released forward,
+    not the bin-integrated probability model in math_tests. Chunking bounds memory.
+    Import Triton only when requested, so CPU extensions can import this module.
+    """
+    if backend not in ('auto', 'torch', 'triton'):
+        raise ValueError(f'Unknown temporal backend: {backend}')
+    use_triton = backend == 'triton' or (backend == 'auto' and amplitude.is_cuda)
+    if use_triton:
+        if not amplitude.is_cuda:
+            raise ValueError('The Triton backend requires CUDA tensors.')
+        from triton_timekernel import time_kernel_and_reduce_triton_fullG
+        return time_kernel_and_reduce_triton_fullG(amplitude, mean, std, time_bins)
+    if chunk_size < 1:
+        raise ValueError('chunk_size must be positive.')
+    result = amplitude.new_zeros((amplitude.shape[0], time_bins.numel()))
+    for start in range(0, amplitude.shape[1], chunk_size):
+        stop = start + chunk_size
+        kernel = torch.exp(-0.5*((time_bins[None, None, :]-mean[:, start:stop, None])
+                                 / std[:, start:stop, None]).square())
+        result = result + (amplitude[:, start:stop, None]*kernel).sum(dim=1)
+    return result
+
+
 class NLOS_3DGS(nn.Module):
     def __init__(self, device='cuda'):
         super().__init__()
@@ -223,6 +250,35 @@ class NLOS_3DGS(nn.Module):
         z_centers = self.compute_z(self.z_centers_raw)
         return torch.cat([xy_centers, z_centers], dim=1)
 
+    def _rotation_matrices(self):
+        """Released quaternion convention, shared by static and dynamic paths."""
+        quats = self.quats / (torch.norm(self.quats, dim=1, keepdim=True) + 1e-6)
+        w, x, y, z = quats.unbind(dim=1)
+        return torch.stack([
+            1-2*y*y-2*z*z, 2*x*y-2*z*w, 2*x*z+2*y*w,
+            2*x*y+2*z*w, 1-2*x*x-2*z*z, 2*y*z-2*x*w,
+            2*x*z-2*y*w, 2*y*z+2*x*w, 1-2*x*x-2*y*y,
+        ], dim=1).view(-1, 3, 3)
+
+    def gaussian_state(self):
+        """Activated Gaussian state for affine push-forward, without detaching.
+
+        The released renderer uses row directions u @ R.T. Thus its covariance
+        convention is R.T @ diag(s^2) @ R. Preserve its precision and volume
+        factors separately, including quaternion normalization epsilon, to make
+        identity deformation agree with the released static equations.
+        """
+        rotation = self._rotation_matrices()
+        scale = self.compute_scale(self.raw_scaling).clamp_min(1e-12)
+        rt = rotation.transpose(-1, -2)
+        return {
+            'centers': self.get_gs_centers(),
+            'albedos': self.compute_albedo(self.albedo),
+            'covariance': rt @ torch.diag_embed(scale.square()) @ rotation,
+            'precision': rt @ torch.diag_embed(scale.reciprocal().square()) @ rotation,
+            'sqrt_det': scale.prod(dim=-1),
+        }
+
     def forward(
         self,
         camera_points,
@@ -232,9 +288,11 @@ class NLOS_3DGS(nn.Module):
         render_magnification=1,
         laser_normals=None,
         camera_normals=None,
+        gaussian_state=None,
+        temporal_backend='auto',
     ):
-        centers = self.get_gs_centers()
-        albedos = self.compute_albedo(self.albedo)
+        centers = self.get_gs_centers() if gaussian_state is None else gaussian_state['centers']
+        albedos = self.compute_albedo(self.albedo) if gaussian_state is None else gaussian_state['albedos']
         if isinstance(laser_normals, list) and len(laser_normals) == 0:
             laser_normals = None
         if isinstance(camera_normals, list) and len(camera_normals) == 0:
@@ -248,6 +306,8 @@ class NLOS_3DGS(nn.Module):
             trans_range,
             laser_normals,
             camera_normals,
+            gaussian_state=gaussian_state,
+            temporal_backend=temporal_backend,
         ) * render_magnification
         return result
 
@@ -260,7 +320,9 @@ class NLOS_3DGS(nn.Module):
         dt,
         trans_range,
         laser_normals,    # (B,3) or None
-        camera_normals    # (B,3) or None
+        camera_normals,   # (B,3) or None
+        gaussian_state=None,
+        temporal_backend='auto',
     ):
         """Render non-confocal transients from oriented 3D Gaussian primitives.
 
@@ -282,19 +344,13 @@ class NLOS_3DGS(nn.Module):
         N = gs_centers.shape[0]
 
         # Convert quaternion and principal scales to a local Gaussian frame.
-        quats = self.quats / (torch.norm(self.quats, dim=1, keepdim=True) + 1e-6)  # (N,4)
-        w, x, y, z = quats.unbind(dim=1)
-        rot = torch.stack([
-            1 - 2*y*y - 2*z*z,   2*x*y - 2*z*w,     2*x*z + 2*y*w,
-            2*x*y + 2*z*w,       1 - 2*x*x - 2*z*z, 2*y*z - 2*x*w,
-            2*x*z - 2*y*w,       2*y*z + 2*x*w,     1 - 2*x*x - 2*y*y
-        ], dim=1).view(-1, 3, 3)                                        # (N,3,3)
+        rot = self._rotation_matrices()
         RT = rot.transpose(1, 2).contiguous()                            # (N,3,3)
         RT_b = RT.unsqueeze(0).expand(B, -1, -1, -1)                     # (B,N,3,3)
 
         s        = self.compute_scale(self.raw_scaling).clamp_min(1e-12).view(N, 3) # (N,3)
         inv_s    = 1.0 / s                                               # (N,3)
-        sqrt_det = s.prod(dim=1)                                         # (N,)
+        sqrt_det = s.prod(dim=1) if gaussian_state is None else gaussian_state['sqrt_det']
 
         # Compute illumination and detection directions. Confocal data reuse u1.
         xg = gs_centers.unsqueeze(0)       # (B,N,3), broadcast over measurements
@@ -323,6 +379,10 @@ class NLOS_3DGS(nn.Module):
         inv_s_b = inv_s.view(1, N, 3)                          # (1,N,3)
         quad_u1 = (u1p * inv_s_b).pow_(2).sum(dim=-1)          # (B,N)
         quad_u2 = quad_u1 if isconfocal else (u2p * inv_s_b).pow_(2).sum(dim=-1)
+        if gaussian_state is not None:
+            precision = gaussian_state['precision']
+            quad_u1 = torch.einsum('bni,nij,bnj->bn', u1, precision, u1)
+            quad_u2 = quad_u1 if isconfocal else torch.einsum('bni,nij,bnj->bn', u2, precision, u2)
 
         sqrt_det_b = sqrt_det.unsqueeze(0)                     # (B,N)
         sqrt_in  = sqrt_det_b * (quad_u1 + eps).sqrt()         # (B,N)
@@ -332,6 +392,9 @@ class NLOS_3DGS(nn.Module):
         w   = u1 + u2                                          # (B,N,3)
         wp  = torch.matmul(w.unsqueeze(2), RT_b).squeeze(2)    # (B,N,3)
         std_bins = (((wp * s.unsqueeze(0)).pow_(2)).sum(dim=-1) + eps).sqrt() * c_dt_inv  # (B,N)
+        if gaussian_state is not None:
+            variance = torch.einsum('bni,nij,bnj->bn', w, gaussian_state['covariance'], w)
+            std_bins = (variance + eps).sqrt() * c_dt_inv
 
         # Relay-surface cosine terms.
         if (laser_normals is not None) and (not (hasattr(laser_normals, "numel") and laser_normals.numel() == 0)):
@@ -373,5 +436,5 @@ class NLOS_3DGS(nn.Module):
         std = (std_bins + eps).unsqueeze(-1)            # (B,N,1)
 
         # Use Triton kernel for memory-efficient backward pass
-        trans = time_kernel_and_reduce_triton_fullG(A, mu.squeeze(-1), std.squeeze(-1), tb.view(-1))
+        trans = reduce_time_kernels(A, mu.squeeze(-1), std.squeeze(-1), tb.view(-1), temporal_backend)
         return trans
