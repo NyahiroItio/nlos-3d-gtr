@@ -23,12 +23,20 @@ def main():
     demo.add_argument('--device', default='cpu')
     demo.add_argument('--seed', type=int, default=20261029)
     demo.add_argument('--noise', choices=['none', 'poisson'], default='poisson')
+    pivot_demo = sub.add_parser('pivot-demo', help='Opaque ellipsoid center estimation; separate from the non-occluding Gaussian demo.')
+    pivot_demo.add_argument('--output', type=Path, default=Path('deformable_gtr/results/pivot_demo'))
+    pivot_demo.add_argument('--iterations', type=int, default=200)
+    pivot_demo.add_argument('--seed', type=int, default=20261029)
+    pivot_demo.add_argument('--device', default='cpu')
+    pivot_demo.add_argument('--noise', choices=['none', 'poisson'], default='poisson')
     train = sub.add_parser('fit', help='Fit a timed NPZ sequence from a canonical NPZ or original 3D-GTR checkpoint.')
     train.add_argument('--data', type=Path, required=True)
     train.add_argument('--init', type=Path, required=True)
     train.add_argument('--output', type=Path, required=True)
     train.add_argument('--mode', choices=['static', 'isotropic', 'anisotropic'], default='anisotropic')
-    train.add_argument('--pivot', type=float, nargs=3, required=True, metavar=('X', 'Y', 'Z'))
+    train.add_argument('--pivot', type=float, nargs=3, required=True, metavar=('X', 'Y', 'Z'),
+                       help='Fixed center, or initial center guess when --learn-pivot is enabled.')
+    train.add_argument('--learn-pivot', action='store_true', help='Estimate one fixed center shared by all times; incompatible with --translation.')
     train.add_argument('--knots', type=float, nargs='+', help='Must include reference time and cover every exposure.')
     train.add_argument('--translation', action='store_true')
     train.add_argument('--fit-canonical', choices=['none', 'centers_albedo', 'all'], default='centers_albedo')
@@ -54,12 +62,16 @@ def main():
     if args.command == 'demo':
         report = run_demo(args.output, iterations=args.iterations, device=args.device, seed=args.seed, noise=args.noise)
         print(f'Demo passed. Report: {args.output / "report.json"}')
+    elif args.command == 'pivot-demo':
+        from deformable_gtr.pivot_demo import run_pivot_demo
+        run_pivot_demo(args.output, args.iterations, args.seed, args.device, args.noise)
+        print(f'Wrote {args.output / "report.json"}')
     elif args.command == 'fit':
         canonical = load_canonical(args.init, args.device)
         dtype = next(canonical.parameters()).dtype
         data = Measurements.load(args.data, args.device, dtype)
         knots = args.knots if args.knots else np.unique(np.r_[data.exposure_start.min(), data.times, data.exposure_end.max()])
-        motion = AxisScaling(knots, args.pivot, args.mode, args.translation).to(device=args.device, dtype=dtype)
+        motion = AxisScaling(knots, args.pivot, args.mode, args.translation, args.learn_pivot).to(device=args.device, dtype=dtype)
         model = DeformableGTR(canonical, motion, data.dt, data.t_range,
                               data.magnification if args.magnification is None else args.magnification,
                               args.quadrature, args.backend)

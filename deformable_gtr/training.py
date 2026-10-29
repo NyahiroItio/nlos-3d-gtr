@@ -94,7 +94,7 @@ def normalized_mse(predicted, observed):
 
 def fit(model, data, *, iterations=400, fit_canonical='centers_albedo', validation=0.2,
         seed=0, loss='mse', canonical_lr=0.008, motion_lr=0.02, smoothness=1e-5,
-        anchor_weight=1e-5, batch_size=0, log_every=100):
+        anchor_weight=1e-5, batch_size=0, log_every=100, pivot_lr=0.001):
     """联合优化共享参考和运动参数；原始静态训练入口保持不变。
 
     loss=mse 兼容基线强度单位。loss=poisson 要求原始整数计数和已校准均值；
@@ -118,17 +118,21 @@ def fit(model, data, *, iterations=400, fit_canonical='centers_albedo', validati
         parameter.requires_grad_(fit_canonical == 'all' or name in active_names)
     groups = []
     canonical_parameters = [p for p in canonical.parameters() if p.requires_grad]
-    motion_parameters = [p for p in model.motion.parameters() if p.requires_grad]
+    # pivot 的单位是米，log_scale 无量纲；不能共享同一数值学习率。
+    motion_parameters = [p for name, p in model.motion.named_parameters() if p.requires_grad and name != 'pivot']
     if canonical_parameters:
         groups.append({'params': canonical_parameters, 'lr': canonical_lr})
     if motion_parameters:
         groups.append({'params': motion_parameters, 'lr': motion_lr})
+    if model.motion.learn_pivot:
+        groups.append({'params': [model.motion.pivot], 'lr': pivot_lr})
     if not groups:
         raise ValueError('No trainable parameters: use a dynamic mode or enable canonical fitting.')
     optimizer = torch.optim.Adam(groups)
     train_rows, valid_rows = split_spatial_rows(data, validation, seed)
     generator = torch.Generator(device=data.device).manual_seed(seed)
     anchor = canonical.get_gs_centers().detach().clone()
+    initial_pivot = model.motion.pivot.detach().cpu().tolist()
     history = []
     started = time.perf_counter()
     for step in range(iterations):
@@ -169,6 +173,8 @@ def fit(model, data, *, iterations=400, fit_canonical='centers_albedo', validati
     return {'history': history, 'train_rows': train_rows.cpu().tolist(), 'validation_rows': valid_rows.cpu().tolist(),
             'elapsed_seconds': elapsed, 'iterations': iterations, 'fit_canonical': fit_canonical, 'loss': loss,
             'final_train_nmse': history[-1]['train_nmse'], 'final_validation_nmse': history[-1]['validation_nmse'],
+            'learn_pivot': model.motion.learn_pivot, 'initial_pivot_m': initial_pivot,
+            'estimated_pivot_m': model.motion.pivot.detach().cpu().tolist(),
             'scale_bound_hits': int((model.motion.log_scales.detach().abs() >= np.log(2)-1e-5).sum())}
 
 
@@ -181,6 +187,7 @@ def export_prediction(model, data, path):
         state = model.canonical.gaussian_state()
     np.savez_compressed(path, predicted_transients=predictions, times=times,
                         scales=scales.cpu().numpy(), translation_m=offsets.cpu().numpy(),
+                        pivot_m=model.motion.pivot.detach().cpu().numpy(),
                         canonical_centers_m=state['centers'].cpu().numpy(),
                         canonical_covariance_m2=state['covariance'].cpu().numpy())
 

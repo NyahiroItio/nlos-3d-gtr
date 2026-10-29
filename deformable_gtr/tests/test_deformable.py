@@ -138,6 +138,43 @@ class DeformableTests(unittest.TestCase):
             recovered = load_dynamic(path, backend='torch')
             torch.testing.assert_close(recovered(data), model(data), rtol=1e-12, atol=1e-20)
 
+    def test_unknown_fixed_pivot_gradient_and_roundtrip(self):
+        data = Measurements(arrays(1.0), dtype=torch.float64)
+        moving = AxisScaling([0, 1], [0.01, -0.02, 0.72], learn_pivot=True).double()
+        model = DeformableGTR(scene(), moving, data.dt, data.t_range, magnification=1e6, backend='torch')
+        self.assertIn('pivot', dict(moving.named_parameters()))
+        state = scene().gaussian_state()
+        initial = moving.push_forward(state, 0.0)['centers'].sum()
+        torch.testing.assert_close(torch.autograd.grad(initial, moving.pivot)[0], torch.zeros(3, dtype=torch.float64))
+        with torch.no_grad():
+            moving.log_scales.copy_(torch.tensor([[0.05, 0.10, 0.15]], dtype=torch.float64))
+        weighted = torch.linspace(0.1, 1.0, data.bins, dtype=torch.float64)
+        gradient = torch.autograd.grad((model(data)*weighted).sum(), moving.pivot)[0]
+        finite = torch.zeros_like(gradient)
+        delta = 1e-6
+        for axis in range(3):
+            with torch.no_grad():
+                moving.pivot[axis] += delta
+                plus = (model(data)*weighted).sum()
+                moving.pivot[axis] -= 2*delta
+                minus = (model(data)*weighted).sum()
+                moving.pivot[axis] += delta
+                finite[axis] = (plus-minus)/(2*delta)
+        torch.testing.assert_close(gradient, finite, rtol=3e-5, atol=1e-9)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)/'unknown_pivot.pth'
+            save_dynamic(model, path)
+            recovered = load_dynamic(path, backend='torch')
+            self.assertTrue(recovered.motion.learn_pivot)
+            self.assertIn('pivot', dict(recovered.motion.named_parameters()))
+            torch.testing.assert_close(recovered(data), model(data), rtol=1e-12, atol=1e-20)
+
+    def test_unknown_pivot_gauge_rejected(self):
+        with self.assertRaises(ValueError):
+            AxisScaling([0, 1], [0, 0, 0.72], translation=True, learn_pivot=True)
+        with self.assertRaises(ValueError):
+            AxisScaling([0, 1], [0, 0, 0.72], mode='static', learn_pivot=True)
+
     def test_original_checkpoint_initialization(self):
         original = scene()
         config = canonical_config(original)

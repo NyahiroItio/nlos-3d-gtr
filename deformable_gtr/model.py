@@ -65,7 +65,7 @@ class AxisScaling(nn.Module):
     时间结点间线性插值 log_scale；不在未知区间盲目外推。
     """
 
-    def __init__(self, knot_times, pivot, mode='anisotropic', translation=False):
+    def __init__(self, knot_times, pivot, mode='anisotropic', translation=False, learn_pivot=False):
         super().__init__()
         times = torch.as_tensor(knot_times, dtype=torch.get_default_dtype())
         pivot = torch.as_tensor(pivot, dtype=times.dtype)
@@ -75,8 +75,15 @@ class AxisScaling(nn.Module):
             raise ValueError('At least two strictly increasing knot times are required.')
         if pivot.shape != (3,) or not torch.isfinite(times).all() or not torch.isfinite(pivot).all():
             raise ValueError('Invalid pivot or times.')
+        if learn_pivot and (translation or mode == 'static'):
+            raise ValueError('An unknown fixed pivot requires a nonstatic mode and translation=False; otherwise the pivot is ambiguous.')
         self.register_buffer('knot_times', times)
-        self.register_buffer('pivot', pivot)
+        self.learn_pivot = bool(learn_pivot)
+        if self.learn_pivot:
+            # 所有时刻共用的三个未知坐标，不是每帧独立平移。
+            self.pivot = nn.Parameter(pivot.clone())
+        else:
+            self.register_buffer('pivot', pivot)
         self.mode, self.translation = mode, bool(translation)
         channels = 1 if mode == 'isotropic' else 3
         self.log_scales = nn.Parameter(torch.zeros(len(times)-1, channels), requires_grad=mode != 'static')
@@ -192,7 +199,7 @@ class DeformableGTR(nn.Module):
             'canonical': canonical_config(self.canonical),
             'motion': {'knot_times': self.motion.knot_times.detach().cpu().tolist(),
                        'pivot': self.motion.pivot.detach().cpu().tolist(), 'mode': self.motion.mode,
-                       'translation': self.motion.translation},
+                       'translation': self.motion.translation, 'learn_pivot': self.motion.learn_pivot},
             'render': {'dt': self.dt, 't_range': self.t_range, 'magnification': self.magnification,
                        'quadrature': self.quadrature, 'backend': self.backend},
         }

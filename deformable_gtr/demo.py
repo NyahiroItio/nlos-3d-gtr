@@ -1,4 +1,4 @@
-"""带噪、空间留出的整体膨胀验证；不是完整气球或真实数据实验。"""
+"""带噪、空间留出的整体膨胀验证；全壳无自遮挡，不是不透光气球实验。"""
 
 from __future__ import annotations
 
@@ -74,7 +74,10 @@ def make_case(case, output, device='cpu', seed=20261029, noise='poisson'):
 def run_demo(output, *, iterations=200, device='cpu', seed=20261029, noise='poisson'):
     output = Path(output)
     report = {'seed': seed, 'noise': noise, 'device': str(device), 'cases': {},
-              'scope': 'Warm-start synthetic Gaussian shell; fixed canonical scales/orientations; no real balloon data.'}
+              'scope': 'Warm-start non-occluding full Gaussian shell; fixed canonical scales/orientations; not opaque-balloon imaging.',
+              'visibility_model': {'full_shell_returns': True, 'self_occlusion': False,
+                                   'target_surface_cosines': False,
+                                   'backside_initialization_from_truth': True}}
     curves = {}
     for case_index, case in enumerate(['uniform', 'anisotropic']):
         directory = output/case
