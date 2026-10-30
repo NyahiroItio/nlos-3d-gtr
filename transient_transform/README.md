@@ -24,6 +24,16 @@ python -m unittest discover -s transient_transform/tests -v
 
 `python -m transient_transform.original_demo` 提供相同的运行入口。原版数据下载后会保留在本地，后续重建不需要重复下载。
 
+## 静态平均验证
+
+```powershell
+python -m transient_transform.static_mean
+```
+
+使用原版 S/U 与漫反射 S 测量作为固定的经验期望，模拟 7 次独立计数曝光，比较原版单帧与 LTAI 静态平均。另有相同总曝光量的原版对照。默认 16 组随机序列，CPU 两个线程；当前测试共 10 项。
+
+结果在 `results/static_mean/`，包含重建三视图、噪声缩放图、观测与有符号体积、验证报告。这里验证相对于原版测量的平均估计，不声称消除了该测量自身的噪声或验证了真实密度。方法与判据见 [静态平均验证说明](STATIC_MEAN.md)。
+
 ## 结果
 
 默认输出位于 `results/original_alignment/`：
@@ -43,12 +53,14 @@ python -m unittest discover -s transient_transform/tests -v
 | --- | --- |
 | `original_lct.py` | 原版离散约定下的静态 LCT 线性核心与显示后处理 |
 | `original_demo.py`、`demo.py` | 数据重建、绘图、保存及命令行入口 |
+| `static_mean.py` | 流式静态均值估计、原版/新版本比较及曝光预算验证 |
 | `upstream.py` | 下载、缓存和校验固定版本的作者工程与数据 |
 | `reference.py` | 生成 MATLAB 对照脚本及导出冻结参考 |
 | `tests/test_original_lct.py` | 当前基线的 6 项数值验证 |
+| `tests/test_static_mean.py` | 静态平均的统计与曝光归一化验证 |
 | `tests/fixtures/` | 小型 MATLAB 数值参考及来源说明 |
 
-`OriginalLCT.__call__()` 返回原生 `[depth, y, x]` 有符号线性结果；`display_volume(..., clip=True)` 用于复现作者的静态显示。当前实现提供静态基线，动态合成、逐扫描时间拟合和速度场恢复尚未接入。
+`OriginalLCT.__call__()` 返回原生 `[depth, y, x]` 有符号线性结果；`display_volume(..., clip=True)` 用于复现作者的静态显示。当前实现提供静态基线和重复曝光均值验证；动态形变、逐扫描时间斜率拟合和速度场恢复尚未接入。
 
 完整来源、工程约定、MATLAB 兼容处理与重新生成参考的步骤见 [原版工程对齐说明](ORIGINAL_ALIGNMENT.md)。
 
