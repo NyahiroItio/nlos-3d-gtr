@@ -51,3 +51,5 @@ python -m unittest discover -s transient_transform/tests -v
 `OriginalLCT.__call__()` 返回原生 `[depth, y, x]` 有符号线性结果；`display_volume(..., clip=True)` 用于复现作者的静态显示。当前实现提供静态基线，动态合成、逐扫描时间拟合和速度场恢复尚未接入。
 
 完整来源、工程约定、MATLAB 兼容处理与重新生成参考的步骤见 [原版工程对齐说明](ORIGINAL_ALIGNMENT.md)。
+
+数学建模、连续逆与实际离散实现的关系见 [LCT 推导笔记](LCT_DERIVATION.md)。
