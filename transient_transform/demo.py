@@ -364,7 +364,11 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', default=None, help='Default: results/<inverse>_demo inside this package.')
-    parser.add_argument('--inverse', choices=('lct', 'spectral'), default='lct')
+    parser.add_argument('--inverse', choices=('original', 'lct', 'spectral'), default='original',
+                        help='original: pinned author data/engineering; lct: earlier experimental prototype.')
+    parser.add_argument('--original-source', default=None)
+    parser.add_argument('--original-scenes', nargs='+', type=int, default=[7, 9], choices=range(1, 11))
+    parser.add_argument('--matlab-reference', default=None)
     parser.add_argument('--seed', type=int, default=20261029)
     parser.add_argument('--frames', type=int, default=7)
     parser.add_argument('--half-window', type=float, default=0.3, help='Slow-time half-window in seconds.')
@@ -380,7 +384,16 @@ def main():
     if args.threads < 1:
         parser.error('--threads must be positive.')
     with threadpool_limits(limits=args.threads):
-        run(args)
+        if args.inverse == 'original':
+            from .original_demo import run as run_original, DEFAULT_OUTPUT
+            from .reference import DEFAULT_OUTPUT as DEFAULT_REFERENCE
+            from .upstream import DEFAULT_ROOT
+            run_original(Path(args.original_source) if args.original_source else DEFAULT_ROOT/'cnlos2018',
+                         Path(args.output) if args.output else DEFAULT_OUTPUT,
+                         args.original_scenes,
+                         Path(args.matlab_reference) if args.matlab_reference else DEFAULT_REFERENCE)
+        else:
+            run(args)
 
 
 if __name__ == '__main__':

@@ -2,9 +2,26 @@
 
 本目录在 `research/transient-transform` 分支中独立实现，不导入 3D-GTR、Torch 或 Gaussian 场景组件。
 
+## 当前推荐入口：已验证的原版工程
+
+**原版 LCT 工程已在 MATLAB 和 Python 间逐阶段对齐。** 原始 S/U 与漫反射 S 的 64×64×512 输出相对差异约 1e-15，21 项测试通过。原版源文件未改动；MATLAB R2024b 兼容副本仅预声明隐式加载的 `width` 变量。
+
+```powershell
+python -m transient_transform.upstream
+python -m transient_transform.demo
+```
+
+默认使用原版数据和原版工程约定。结果位于 `results/original_alignment/`，包括原生三维重建的三视图 PNG/SVG 和测量瞬态图。完整记录、原版来源、数值核验与运行方式见 **[原版工程对齐说明](ORIGINAL_ALIGNMENT.md)**。
+
+下面保留早期 640 体素模拟实验，作为历史诊断。下文的 `lct` 指失败的连续公式原型，**不代表已对齐的原版 LCT**。两个旧后端必须显式选择 `--inverse spectral` 或 `--inverse lct`。
+
+---
+
+## 历史：固定体素合成实验
+
 本版验证的链路是：**自行生成三维体素密度与完整共焦扫描 → 加入光子计数噪声 → 在慢时间上直接拟合参考 transient 和导数 → 用固定线性逆算子直接输出参考密度与密度导数 → 核对理论噪声传播。**
 
-**2026-10-30：默认后端已替换为真正的 FFT/LCT 线性算子，保留 spectral 后端作对照。** LCT 包含平方光程重采样、抛物面卷积核、三维频域正则化反卷积和深度反变换；保留有符号输出。它不构造稠密逆矩阵，也不进行迭代。
+**早期实验后端：从连续公式构建的 FFT/LCT 线性原型，保留 spectral 作对照。** 原型包含平方光程重采样、抛物面卷积核、三维频域正则化反卷积和深度反变换；保留有符号输出。它不构造稠密逆矩阵，也不进行迭代，但未经原版工程对齐。
 
 **首次替换实验发现：旧合成数据上的 LCT 定量误差很大，不能把替换解释为精度等效。** 默认无噪声参考密度相对误差约 87.68%，导数约 84.36%；原 spectral 对应约 0.85%、0.87%。两者处理完全相同的原始计数。有限孔径的零延拓、不同空间／时间离散以及未反卷积的 IRF 都会造成模型偏差。报告保留绝对单位，没有按真值拟合尺度或只展示归一化图像。
 
@@ -20,10 +37,10 @@ python -m transient_transform.compare
 python -m unittest discover -s transient_transform/tests -v
 ```
 
-默认 7 次完整扫描、80 次独立随机重复、2 个计算线程。LCT 和 spectral 分别写入 `transient_transform/results/lct_demo/`、`spectral_demo/`，比较写入 `backend_comparison/`；不会覆盖旧版 `results/demo/`。重跑覆盖各输出目录中的同名文件。换实验时指定新目录：
+显式选择旧后端后，默认 7 次完整扫描、80 次独立随机重复、2 个计算线程。原型 LCT 和 spectral 分别写入 `transient_transform/results/lct_demo/`、`spectral_demo/`，比较写入 `backend_comparison/`。换实验时指定新目录：
 
 ```powershell
-python -m transient_transform.demo --half-window 0.15 --peak-counts 150 --background 1.5 --trials 80 --output transient_transform/results/short_window
+python -m transient_transform.demo --inverse spectral --half-window 0.15 --peak-counts 150 --background 1.5 --trials 80 --output transient_transform/results/short_window
 ```
 
 主要参数：`--frames` 为不小于 3 的奇数，`--half-window` 为慢时间半窗长，单位秒；`--ridge` 为 spectral 的相对正则化强度；`--lct-ridge` 默认 1e-4，为相对最大核频谱功率的正则化强度，`--lct-bins` 默认 256，为平方光程网格长度；`--background-repeats` 为背景标定的等曝光重复次数。演示期间假设每次完整扫描内物体静止，不模拟扫描耗时与墙点切换。
@@ -76,7 +93,7 @@ g 是合成曝光增益：令线性密度场景参考时刻的最大期望信号
 
 ## 3. 两个直接反演后端
 
-### LCT：默认后端
+### LCT：历史实验原型
 
 当前模拟器的快时间核使用 delta(s-2r/c)，因此定义
 

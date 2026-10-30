@@ -1,4 +1,8 @@
-"""Signed linear light-cone transform, implemented from its integral identity.
+"""EXPERIMENTAL continuous-form LCT prototype; not the aligned author backend.
+
+For the verified 2018 engineering path use original_lct.py. This earlier
+prototype has large bias on its physical voxel simulator and is retained as
+a historical diagnostic, not the recommended static baseline.
 
 For a time-density transient with delta(s-2r/c), let v=(cs/2)^2,
 u=z^2, q=rho/(2z), and g(v)=v^(3/2)*tau(2*sqrt(v)/c)/(gain*c).
