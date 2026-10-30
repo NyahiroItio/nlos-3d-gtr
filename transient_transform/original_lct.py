@@ -6,9 +6,8 @@ half-wall width, pairwise count summation, normalized nearest-layer PSF,
 fine-grid weighted resampling and its transpose, and the absolute 1/SNR
 Wiener penalty. This file does not copy or redistribute the upstream source.
 
-Unlike lct.py (the earlier continuous-form prototype), the output is the
-author's native [depth, y, x] reconstruction in author-code units. It is not
-calibrated physical density and is not interpolated onto the old 640 voxels.
+The output is the author's native [depth, y, x] reconstruction in author-code
+units. It is not calibrated physical density.
 """
 
 from dataclasses import dataclass, asdict

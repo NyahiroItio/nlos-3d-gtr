@@ -1,1 +1,1 @@
-"""Fixed-grid transient inversion experiments, independent of 3D-GTR."""
+"""Author-aligned LCT baseline for transient inversion research, independent of 3D-GTR."""

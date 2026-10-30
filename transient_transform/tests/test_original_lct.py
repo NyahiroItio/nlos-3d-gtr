@@ -5,7 +5,6 @@ import numpy as np
 from threadpoolctl import threadpool_limits
 
 from transient_transform.original_lct import OriginalLCT, SceneSettings
-from transient_transform.temporal import fit_weights
 from transient_transform.upstream import SOURCE_SHA256
 
 
@@ -75,7 +74,8 @@ class AuthorEngineeringParity(unittest.TestCase):
         slope = np.roll(center, 1, axis=0)-center
         times = np.array([-.1, 0., .1])
         frames = center+times[:, None, None, None]*slope
-        weights = fit_weights(times)
+        design = np.column_stack((np.ones(len(times)), times))
+        weights = np.linalg.pinv(design)
         fit_first = (weights @ frames.reshape(3, -1)).reshape(2, *center.shape)
         actual = np.stack([model(frame) for frame in fit_first])
         inverse_first = np.stack([model(frame) for frame in frames])
