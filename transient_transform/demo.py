@@ -9,10 +9,11 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy import sparse
+from scipy import sparse, fft
 from threadpoolctl import threadpool_limits
 
-from .operator import build_operator, make_geometry, make_scene
+from .operator import Grid, build_operator, make_geometry, make_scene
+from .lct import LCTInverse
 from .spectral import SpectralInverse
 from .temporal import baseline_weights, coefficient_variance, fit_transients, fit_weights
 
@@ -33,6 +34,8 @@ def summarize(expected, truth, variance, noise_samples, reconstruction):
         'empirical_to_theoretical_noise_energy': empirical_noise / variance,
         'deterministic_bias_l2': float(np.sqrt(bias_energy)),
         'relative_deterministic_bias': float(np.sqrt(bias_energy / signal_energy)),
+        'expected_shape_cosine': float(np.dot(expected, truth) / max(np.linalg.norm(expected)*np.linalg.norm(truth), 1e-30)),
+        'expected_amplitude_projection': float(np.dot(expected, truth) / signal_energy),
         'output_signal_snr_db': ratio_db(float(np.sum(expected**2)), variance),
         'expected_reconstruction_snr_db_including_bias': ratio_db(signal_energy, variance + bias_energy),
         'single_draw_relative_error': float(np.linalg.norm(reconstruction - truth) / np.linalg.norm(truth)),
@@ -151,6 +154,30 @@ def window_tradeoff(grid, operator, inverse, args):
     return records
 
 
+def aperture_diagnostic(inverse, wall):
+    """Matched transformed-domain experiment isolating measurement truncation.
+
+    This diagnostic is not used to calibrate the inverse or rescale its output.
+    Full padded measurements are a mathematical control unavailable to the
+    actual finite-aperture scan. Both outputs are compared on the same ROI.
+    """
+    native_grid = Grid(np.unique(wall[:, 0]), np.unique(wall[:, 1]), np.sqrt(inverse.u))
+    rho = make_scene(native_grid, [0.], 'linear_density')[1].reshape(inverse.nx, inverse.ny, inverse.nu)
+    depth = 2*np.sqrt(inverse.u)[None, None, :]
+    q = np.divide(rho, depth, out=np.zeros_like(rho), where=depth > 0)
+    padded = np.zeros(inverse.fft_shape)
+    padded[:inverse.nx, :inverse.ny, :inverse.nu] = q
+    full_data = fft.irfftn(fft.rfftn(padded)*inverse.forward_spectrum, s=inverse.fft_shape)
+    control = fft.irfftn(fft.rfftn(full_data)*inverse.inverse_filter, s=inverse.fft_shape)
+    control = control[:inverse.nx, :inverse.ny, :inverse.nu]
+    cropped = inverse._convolve(full_data[None, :inverse.nx, :inverse.ny, :inverse.nu])[0]
+    return {
+        'full_padded_measurements_relative_error': float(np.linalg.norm(control-q)/np.linalg.norm(q)),
+        'cropped_and_zero_padded_measurements_relative_error': float(np.linalg.norm(cropped-q)/np.linalg.norm(q)),
+        'note': 'Matched H, same source, same filter, same ROI. Only the observed data domain differs. '
+                'This isolates truncation bias in transformed space, not every physical-model error.'}
+
+
 def plot_results(grid, times, results, visuals, output):
     fig, axes = plt.subplots(4, 3, figsize=(12, 12), constrained_layout=True)
     extent = [grid.x[0], grid.x[-1], grid.z[0], grid.z[-1]]
@@ -229,7 +256,7 @@ def run(args):
         raise ValueError('Use an odd frame count >= 3 and at least two Monte Carlo trials.')
     if args.half_window <= 0 or args.peak_counts <= 0 or args.background < 0 or args.background_repeats < 1:
         raise ValueError('Check window, photon counts, and background calibration settings.')
-    output = Path(args.output).resolve()
+    output = Path(args.output or f'transient_transform/results/{args.inverse}_demo').resolve()
     output.mkdir(parents=True, exist_ok=True)
     times = np.linspace(-args.half_window, args.half_window, args.frames)
     grid, wall, fast_edges = make_geometry()
@@ -243,26 +270,47 @@ def run(args):
     build_seconds = perf_counter() - start
     print(f'Operator: {operator.shape}, {operator.nnz:,} nonzeros', flush=True)
     start = perf_counter()
-    inverse = SpectralInverse(operator, args.ridge)
+    if args.inverse == 'lct':
+        inverse = LCTInverse(grid, wall, fast_edges, gain, args.lct_ridge, args.lct_bins)
+        inverse_info = {'backend': 'lct', 'relative_ridge': args.lct_ridge,
+                        'absolute_ridge': inverse.ridge, 'native_shape': (inverse.nx, inverse.ny, inverse.nu),
+                        'fft_shape': inverse.fft_shape, 'dense_inverse_stored': False,
+                        'filter_memory_mib': inverse.inverse_filter.nbytes / 2**20,
+                        'positivity_clamp': False, 'irf_deconvolution': False}
+    else:
+        inverse = SpectralInverse(operator, args.ridge)
+        inverse_info = {'backend': 'spectral', 'relative_ridge': args.ridge,
+                        'absolute_ridge': inverse.ridge,
+                        'effective_degrees_of_freedom': inverse.effective_dof,
+                        'singular_values': inverse.singular_values.tolist(),
+                        'kernel_memory_mib': inverse.matrix.nbytes / 2**20}
     factor_seconds = perf_counter() - start
-    print(f'Direct spectral inverse prepared in {factor_seconds:.2f} s', flush=True)
+    print(f'{args.inverse} inverse prepared in {factor_seconds:.2f} s', flush=True)
+    # Exact covariance is a diagnostic, not part of online reconstruction.
+    start = perf_counter()
+    inverse.noise_energy(np.zeros(operator.shape[0]))
+    covariance_seconds = perf_counter() - start
     rng = np.random.default_rng(args.seed)
     report = {
         'seed': args.seed,
-        'method': 'Fixed XYZ voxel density, physical confocal bin-integrated operator, direct ridge spectral inverse.',
-        'not_implemented': ['FFT/LCT convolution inversion', 'opaque-surface self-occlusion',
+        'method': f'Fixed XYZ voxel density, physical confocal bin-integrated data, direct {args.inverse} inverse.',
+        'not_implemented': ['opaque-surface self-occlusion',
                             'material velocity estimation', 'SPAD first-event pile-up or dead time',
                             'real hardware calibration'],
+        'inverse_model_note': ('LCT uses the ideal continuous confocal identity and fixed interpolation; '
+                               'it does not invert the exact sparse simulator A or its IRF. '
+                               'Finite-aperture zero padding and voxel-center quadrature can produce '
+                               'large amplitude/shape bias. Absolute gain is physical, not fitted to truth.'
+                               if args.inverse == 'lct' else
+                               'Spectral inversion uses the same discrete A as simulation, including IRF.'),
         'geometry': {'grid_shape': grid.shape, 'wall_points': len(wall),
                      'fast_bins': len(fast_edges)-1, 'fast_bin_width_s': float(np.diff(fast_edges)[0]),
                      'irf_sigma_s': 60e-12, 'operator_shape': operator.shape,
                      'operator_nnz': operator.nnz, 'synthetic_global_gain': float(gain)},
         'settings': vars(args),
-        'inverse': {'relative_ridge': args.ridge, 'absolute_ridge': inverse.ridge,
-                    'effective_degrees_of_freedom': inverse.effective_dof,
-                    'singular_values': inverse.singular_values.tolist(),
-                    'kernel_memory_mib': inverse.matrix.nbytes / 2**20},
-        'timing': {'operator_seconds': build_seconds, 'spectral_preparation_seconds': factor_seconds},
+        'inverse': inverse_info,
+        'timing': {'operator_seconds': build_seconds, 'inverse_preparation_seconds': factor_seconds,
+                   'exact_covariance_preparation_seconds': covariance_seconds},
         'budget_note': 'Same acquired sequence and gain for all methods. Window reference uses all frames; '
                        'baseline reference uses one, derivative uses two adjacent frames. '
                        'Noise reduction consumes more observations and is not a same-two-frame photon advantage.',
@@ -276,6 +324,9 @@ def run(args):
         result, visual = simulate_case(case, grid, operator, inverse, times, args, rng, output / case)
         report['cases'][case], visuals[case] = result, visual
         print(f'  window/baseline noise RMS: {result["window_to_baseline_theoretical_noise_rms"]}', flush=True)
+        print('  window noiseless relative bias (rho, derivative): '
+              + str([round(result['metrics']['window'][field]['relative_deterministic_bias'], 4)
+                     for field in ('reference', 'derivative')]), flush=True)
     report['checks'] = {
         'fit_and_reconstruction_commute': all(r['commutation_relative_error'] < 1e-10
                                              for r in report['cases'].values()),
@@ -289,6 +340,11 @@ def run(args):
                                           np.max(v['estimates']['window'][1]) for v in visuals.values()),
     }
     report['translation_window_tradeoff'] = window_tradeoff(grid, operator, inverse, args)
+    if args.inverse == 'lct':
+        report['aperture_diagnostic'] = aperture_diagnostic(inverse, wall)
+    report['validation_scope'] = (
+        'Checks validate signs, linearity and noise propagation, not accurate physical reconstruction. '
+        'Inspect deterministic bias and amplitude projection before judging reconstruction quality.')
     report['window_tradeoff_note'] = (
         'Separate hypothetical windows with the same number of full scans '
         'and the same per-scan gain. Exposure durations and scan switching '
@@ -307,7 +363,8 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', default='transient_transform/results/demo')
+    parser.add_argument('--output', default=None, help='Default: results/<inverse>_demo inside this package.')
+    parser.add_argument('--inverse', choices=('lct', 'spectral'), default='lct')
     parser.add_argument('--seed', type=int, default=20261029)
     parser.add_argument('--frames', type=int, default=7)
     parser.add_argument('--half-window', type=float, default=0.3, help='Slow-time half-window in seconds.')
@@ -315,6 +372,8 @@ def main():
     parser.add_argument('--background', type=float, default=1.5, help='Mean counts per fast bin per scan.')
     parser.add_argument('--background-repeats', type=int, default=32)
     parser.add_argument('--ridge', type=float, default=1e-5)
+    parser.add_argument('--lct-ridge', type=float, default=1e-4, help='Relative to the maximum FFT kernel power.')
+    parser.add_argument('--lct-bins', type=int, default=256, help='Uniform squared-range grid samples.')
     parser.add_argument('--trials', type=int, default=80)
     parser.add_argument('--threads', type=int, default=2)
     args = parser.parse_args()
