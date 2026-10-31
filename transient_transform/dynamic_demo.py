@@ -1,4 +1,4 @@
-"""Dynamic LTAI validation: affine density blend and physical lateral translation."""
+"""Dynamic quadratic LTAI validation: affine blend and physical translation."""
 
 import argparse
 from dataclasses import replace
@@ -16,7 +16,7 @@ from threadpoolctl import threadpool_limits
 from .motion_simulation import translation_sequence
 from .original_demo import relative_error
 from .original_lct import OriginalLCT, SceneSettings, load_scene
-from .temporal_fit import AffineTransientEstimator, fit_weights, centered_difference_weights
+from .temporal_fit import PolynomialTransientEstimator, fit_weights, centered_difference_weights
 from .upstream import DEFAULT_ROOT, SOURCE_SHA256, verify_source, sha256
 
 
@@ -75,7 +75,8 @@ def front(model, settings, volume, signed=False):
 
 def save_visuals(fronts, source_fronts, times, width, derivative_maps, title, target,
                  derivative_slices, slice_depth):
-    names = ['Noise-free LCT reference', 'Original / framewise LCT', 'LTAI / joint temporal fit']
+    names = ['Noise-free LCT reference', 'Original / framewise LCT',
+             'LTAI / linear fit', 'LTAI / quadratic fit']
     panels = list(fronts)
     if source_fronts is not None:
         panels.insert(0, source_fronts)
@@ -156,7 +157,8 @@ def render_saved(output):
     for name, result in report['cases'].items():
         target = output/name
         with np.load(target/'projections.npz') as data:
-            fronts = tuple(data[key] for key in ('reference', 'original_framewise', 'ltai'))
+            fronts = tuple(data[key] for key in ('reference', 'original_framewise',
+                                                 'linear', 'ltai'))
             derivative_maps = data['derivative_maps']
         with np.load(target/'coefficients.npz') as data:
             reference = data['reference_signed']
@@ -198,7 +200,9 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
     means = np.maximum(means, 0)
     model = OriginalLCT(settings.n, settings.m, settings.width_m, settings.range_m,
                         settings.diffuse, settings.snr)
-    weights = fit_weights(times)
+    weights = fit_weights(times, degree=2)
+    linear_weights = fit_weights(times)
+    linear_from_quadratic = linear_weights@np.column_stack((np.ones(len(times)), times, times**2))
     baseline_weights = centered_difference_weights(times)
     endpoint_weights = np.zeros(len(times))
     endpoint_weights[[0, -1]] = [-1/(times[-1]-times[0]), 1/(times[-1]-times[0])]
@@ -208,6 +212,7 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
     baseline_expected = np.tensordot(baseline_weights, means, axes=(1, 0))
     endpoint_expected = np.tensordot(endpoint_weights, means, axes=(0, 0))
     ideal = np.stack([model(value) for value in expected_coefficients])
+    linear_ideal = np.einsum('ij,jklm->iklm', linear_from_quadratic, ideal)
     baseline_ideal = np.stack([model(value) for value in baseline_expected])
     endpoint_ideal = model(endpoint_expected)
     reference_frames = []
@@ -221,10 +226,11 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
     norms = np.sum(reference**2, axis=(1, 2, 3))
     if np.any(norms == 0):
         raise ValueError('Both reference coefficients must have nonzero signal energy.')
-    biases = {'ltai': np.sum((ideal-reference)**2, axis=(1, 2, 3)),
+    biases = {'ltai': np.sum((ideal[:2]-reference)**2, axis=(1, 2, 3)),
+              'linear': np.sum((linear_ideal-reference)**2, axis=(1, 2, 3)),
               'adjacent': np.sum((baseline_ideal-reference)**2, axis=(1, 2, 3)),
               'endpoint_slope': np.sum((endpoint_ideal-reference[1])**2)}
-    noise = {key: [] for key in ('ltai', 'adjacent', 'endpoint')}
+    noise = {key: [] for key in ('ltai', 'linear', 'adjacent', 'endpoint')}
     mse = {key: [] for key in noise}
     rng = np.random.default_rng(np.random.SeedSequence([seed, 0 if name == 'affine' else 1]))
     selected = None
@@ -235,7 +241,7 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
     slice_index = int(np.argmax(np.maximum(reference[0], 0).max(axis=(1, 2))))
     slice_depth = np.linspace(0, settings.range_m/2, settings.m)[slice_index]
     for trial in range(trials):
-        estimator = AffineTransientEstimator(times)
+        estimator = PolynomialTransientEstimator(times, degree=2)
         adjacent_input = np.zeros_like(reference)
         endpoint_input = np.zeros_like(reference[0])
         saved_frames = []
@@ -249,12 +255,15 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
                 saved_frames.append(counts)
         fitted_inputs = estimator.estimate()
         fitted = np.stack([model(value) for value in fitted_inputs])
+        linear_fitted = np.einsum('ij,jklm->iklm', linear_from_quadratic, fitted)
         adjacent = np.stack([model(value) for value in adjacent_input])
         endpoint = model(endpoint_input)
-        noise['ltai'].append(np.sum((fitted-ideal)**2, axis=(1, 2, 3)))
+        noise['ltai'].append(np.sum((fitted[:2]-ideal[:2])**2, axis=(1, 2, 3)))
+        noise['linear'].append(np.sum((linear_fitted-linear_ideal)**2, axis=(1, 2, 3)))
         noise['adjacent'].append(np.sum((adjacent-baseline_ideal)**2, axis=(1, 2, 3)))
         noise['endpoint'].append(float(np.sum((endpoint-endpoint_ideal)**2)))
-        mse['ltai'].append(np.sum((fitted-reference)**2, axis=(1, 2, 3)))
+        mse['ltai'].append(np.sum((fitted[:2]-reference)**2, axis=(1, 2, 3)))
+        mse['linear'].append(np.sum((linear_fitted-reference)**2, axis=(1, 2, 3)))
         mse['adjacent'].append(np.sum((adjacent-reference)**2, axis=(1, 2, 3)))
         mse['endpoint'].append(float(np.sum((endpoint-reference[1])**2)))
         if trial == 0:
@@ -264,12 +273,16 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
             framewise = np.stack(framewise)
             fit_after_inverse = np.tensordot(weights, framewise, axes=(1, 0))
             noisy_commutation = relative_error(fitted, fit_after_inverse)
-            predicted = fitted[0]+times[:, None, None, None]*fitted[1]
+            predicted = (fitted[0]+times[:, None, None, None]*fitted[1]
+                         +times[:, None, None, None]**2*fitted[2])
+            linear_predicted = linear_fitted[0]+times[:, None, None, None]*linear_fitted[1]
             selected_frame_errors = {
                 'framewise_relative_error_by_time': [relative_error(a, b) for a, b in zip(framewise, reference_frames)],
+                'linear_relative_error_by_time': [relative_error(a, b) for a, b in zip(linear_predicted, reference_frames)],
                 'ltai_relative_error_by_time': [relative_error(a, b) for a, b in zip(predicted, reference_frames)]}
             selected = (np.stack([front(model, settings, v) for v in reference_frames]),
                         np.stack([front(model, settings, v) for v in framewise]),
+                        np.stack([front(model, settings, v) for v in linear_predicted]),
                         np.stack([front(model, settings, v) for v in predicted]))
             derivative_maps = [front(model, settings, v, signed=True)
                                for v in (reference[1], adjacent[1], endpoint, fitted[1])]
@@ -281,16 +294,17 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
                                 instantaneous_transient_derivative=instantaneous_derivative)
             np.savez_compressed(target/'coefficients.npz', reference_signed=reference,
                                 expected_window_signed=ideal, ltai_signed=fitted,
+                                linear_expected_signed=linear_ideal, linear_signed=linear_fitted,
                                 adjacent_signed=adjacent, endpoint_slope_signed=endpoint,
                                 lateral_m=np.linspace(-settings.width_m, settings.width_m, settings.n),
                                 depth_m=np.linspace(0, settings.range_m/2, settings.m))
             np.savez_compressed(target/'projections.npz', reference=selected[0],
-                                original_framewise=selected[1], ltai=selected[2],
+                                original_framewise=selected[1], linear=selected[2], ltai=selected[3],
                                 derivative_maps=np.stack(derivative_maps), slow_times_s=times)
-            del framewise, predicted, fit_after_inverse, saved_frames
+            del framewise, predicted, linear_predicted, fit_after_inverse, saved_frames
         if (trial+1) % 3 == 0 or trial+1 == trials:
             print(f'  {name}: {trial+1}/{trials} independent noisy sequences', flush=True)
-        del estimator, fitted_inputs, adjacent_input, endpoint_input, fitted, adjacent, endpoint
+        del estimator, fitted_inputs, adjacent_input, endpoint_input, fitted, linear_fitted, adjacent, endpoint
 
     noise = {key: np.asarray(value) for key, value in noise.items()}
     mse = {key: np.asarray(value) for key, value in mse.items()}
@@ -300,12 +314,15 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
     endpoint_prediction = float(np.sum(weights[1]**2)/np.sum(endpoint_weights**2))
     ratios = {'reference_vs_single': paired_ratio(noise['adjacent'][:, 0], noise['ltai'][:, 0],
                                                   ref_prediction if exact_affine else None),
+              'quadratic_reference_vs_linear': paired_ratio(noise['linear'][:, 0], noise['ltai'][:, 0],
+                                                              float(np.sum(weights[0]**2)/np.sum(linear_weights[0]**2))
+                                                              if exact_affine else None),
               'slope_vs_adjacent': paired_ratio(noise['adjacent'][:, 1], noise['ltai'][:, 1],
                                                 slope_prediction if exact_affine else None),
               'slope_vs_endpoints': paired_ratio(noise['endpoint'], noise['ltai'][:, 1],
                                                  endpoint_prediction if exact_affine else None)}
     metrics = {}
-    for key in ('ltai', 'adjacent'):
+    for key in ('ltai', 'linear', 'adjacent'):
         metrics[key] = {'relative_temporal_bias': np.sqrt(biases[key]/norms).tolist(),
                         'relative_noise_rms': np.sqrt(noise[key].mean(axis=0)/norms).tolist(),
                         'relative_total_rms_error': np.sqrt(mse[key].mean(axis=0)/norms).tolist()}
@@ -317,7 +334,9 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
               'noisy_fit_inverse_commutation': noisy_commutation < 1e-10,
               'finite_results': all(np.all(np.isfinite(values)) for values in mse.values())}
     if exact_affine:
-        checks['exact_affine_noiseless_reference_and_slope'] = bool(np.all(np.sqrt(biases['ltai']/norms) < 1e-10))
+        checks['exact_affine_noiseless_reference_and_slope'] = bool(
+            np.all(np.sqrt(biases['ltai']/norms) < 1e-10) and
+            np.all(np.sqrt(biases['linear']/norms) < 1e-10))
         for key, result in ratios.items():
             checks[f'noise_scaling_{key}'] = result['consistent_with_prediction']
     else:
@@ -331,7 +350,8 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
               'derivative_display_depth_m': float(slice_depth),
               'selected_sequence_frame_errors': selected_frame_errors,
               'expected_total_sequence_photons': float(exposure*means.sum()),
-              'inverse_calls': {'ltai_coefficient_fit': 2, 'framewise_then_same_fit': len(times)},
+              'inverse_calls': {'quadratic_coefficient_fit': 3, 'center_and_slope_only': 2,
+                                'framewise_then_same_fit': len(times)},
               'implementation_checks': checks, 'passed': bool(all(checks.values())),
               'note': 'Passed means numerical/statistical checks passed, not that physical density or velocity '
                       'was recovered exactly. Temporal bias is measured against the instantaneous noise-free LCT target.'}
@@ -349,10 +369,11 @@ def run(source_dir=DEFAULT_ROOT/'cnlos2018', output=DEFAULT_OUTPUT, cases=('affi
     times = np.linspace(-half_window, half_window, frames)
     report = {'source_sha256': SOURCE_SHA256, 'frames': frames, 'slow_times_s': times.tolist(),
               'exposure_per_frame': exposure, 'trials': trials, 'seed': seed,
-              'scope': 'Joint reference and signed density derivative using fixed author LCT. No velocity-field inversion.',
+              'scope': 'Quadratic slow-time fit followed by fixed author LCT. No velocity-field inversion.',
               'budget': 'All methods share one recorded sequence. Single-frame, adjacent and endpoint baselines '
-                        'use subsets of it; original LCT of all frames followed by identical OLS uses all photons '
-                        'and is numerically equivalent to LTAI. Its equivalence is checked.',
+                        'use subsets of it; linear and quadratic fits use the same complete sequence. '
+                        'Original LCT of all frames followed by identical quadratic OLS is numerically '
+                        'equivalent to quadratic LTAI. Its equivalence is checked.',
               'display': 'Common fixed LCT grayscale for each sequence; signed fixed-depth slices and depth sums, '
                          'no positivity on slope or metric volumes.', 'cases': {}}
     for case in cases:

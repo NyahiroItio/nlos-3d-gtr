@@ -30,7 +30,7 @@ python -m unittest discover -s transient_transform/tests -v
 python -m transient_transform.static_mean
 ```
 
-使用原版 S/U 与漫反射 S 测量作为固定的经验期望，模拟 7 次独立计数曝光，比较原版单帧与 LTAI 静态平均。另有相同总曝光量的原版对照。默认 16 组随机序列，CPU 两个线程；当前测试共 16 项。
+使用原版 S/U 与漫反射 S 测量作为固定的经验期望，模拟 7 次独立计数曝光，比较原版单帧与 LTAI 静态平均。另有相同总曝光量的原版对照。默认 16 组随机序列，CPU 两个线程；当前测试共 18 项。
 
 结果在 `results/static_mean/`，包含重建三视图、噪声缩放图、观测与有符号体积、验证报告。这里验证相对于原版测量的平均估计，不声称消除了该测量自身的噪声或验证了真实密度。方法与判据见 [静态平均验证说明](STATIC_MEAN.md)。
 
@@ -40,7 +40,7 @@ python -m transient_transform.static_mean
 python -m transient_transform.dynamic_demo
 ```
 
-包含严格线性的密度淡入/淡出，以及从独立飞行时间模型生成的 S 平移。比较原版逐帧重建、相邻/首尾差分和 LTAI 联合拟合，输出 GIF、时间帧对比、有符号变化率图及偏差/噪声报告。默认 7 帧、12 组噪声序列、2 个 CPU 线程，原生体积仍为 64×64×512。
+包含严格线性的密度淡入/淡出，以及从独立飞行时间模型生成的 S 平移。默认采用二阶慢时间拟合，与使用同一批计数的线性拟合、原版逐帧重建及相邻/首尾差分比较，输出 GIF、时间帧对比、有符号变化率图及偏差/噪声报告。默认 7 帧、12 组噪声序列、2 个 CPU 线程，原生体积仍为 64×64×512。
 
 方法、数据假设、曝光预算和物理验证边界见 [动态验证说明](DYNAMIC_VALIDATION.md)。
 
@@ -73,7 +73,7 @@ python -m transient_transform.dynamic_demo
 | `tests/test_dynamic.py` | 时间协方差、窗口偏差、飞行时间与解析运动导数验证 |
 | `tests/fixtures/` | 小型 MATLAB 数值参考及来源说明 |
 
-`OriginalLCT.__call__()` 返回原生 `[depth, y, x]` 有符号线性结果；`display_volume(..., clip=True)` 用于复现作者的静态显示。当前实现提供静态平均、局部线性参考/斜率拟合和独立平移模拟；尚未恢复材料速度场或验证真实动态实验数据。
+`OriginalLCT.__call__()` 返回原生 `[depth, y, x]` 有符号线性结果；`display_volume(..., clip=True)` 用于复现作者的静态显示。当前实现提供静态平均、局部二阶参考/斜率/曲率拟合和独立平移模拟；尚未恢复材料速度场或验证真实动态实验数据。
 
 完整来源、工程约定、MATLAB 兼容处理与重新生成参考的步骤见 [原版工程对齐说明](ORIGINAL_ALIGNMENT.md)。
 

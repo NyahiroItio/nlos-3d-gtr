@@ -3,7 +3,8 @@ import unittest
 import numpy as np
 
 from transient_transform.motion_simulation import C, confocal_response
-from transient_transform.temporal_fit import AffineTransientEstimator, fit_weights, centered_difference_weights
+from transient_transform.temporal_fit import (AffineTransientEstimator,
+    PolynomialTransientEstimator, fit_weights, centered_difference_weights)
 
 
 class TemporalChecks(unittest.TestCase):
@@ -45,6 +46,31 @@ class TemporalChecks(unittest.TestCase):
         self.assertAlmostEqual(coefficients[1], 1.)
         adjacent = centered_difference_weights(times)
         self.assertAlmostEqual(np.sum(weights[1]**2)/np.sum(adjacent[1]**2), 1/14)
+
+    def test_quadratic_fit_removes_curvature_and_retains_centered_slope(self):
+        times = np.linspace(-.3, .3, 7)
+        coefficients = np.array([[8., 5.], [2., -1.], [4., .5]])
+        exposures = np.array([.5, 1., 2., 1., 3., 1., .8])
+        estimator = PolynomialTransientEstimator(times)
+        for time, exposure in zip(times, exposures):
+            estimator.add(exposure*(coefficients[0]+time*coefficients[1]
+                                    +time**2*coefficients[2]), exposure)
+        np.testing.assert_allclose(estimator.estimate(), coefficients, atol=1e-12)
+        quadratic = fit_weights(times, degree=2)
+        linear = fit_weights(times)
+        np.testing.assert_allclose(quadratic[1], linear[1], atol=1e-14)
+        self.assertAlmostEqual(np.sum(quadratic[0]**2)/np.sum(linear[0]**2), 7/3)
+        arbitrary_frames = np.random.default_rng(11).normal(size=(len(times), 4))
+        design = np.column_stack((np.ones(len(times)), times, times**2))
+        np.testing.assert_allclose(linear@arbitrary_frames,
+                                   (linear@design)@(quadratic@arbitrary_frames), atol=1e-13)
+
+    def test_quadratic_fit_requires_three_distinct_times(self):
+        for times in ([0, 0, 1], [0, 1], [0, 1, np.nan]):
+            with self.assertRaises(ValueError):
+                fit_weights(times, degree=2)
+        with self.assertRaises(ValueError):
+            fit_weights([0, 1, 2], degree=3)
 
     def test_incomplete_degenerate_and_invalid_inputs_are_rejected(self):
         for times in ([0, 0], [0, np.nan], [0]):
