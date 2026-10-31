@@ -44,6 +44,14 @@ python -m transient_transform.dynamic_demo
 
 方法、数据假设、曝光预算和物理验证边界见 [动态验证说明](DYNAMIC_VALIDATION.md)。
 
+## 二阶拟合窗口扫描
+
+```powershell
+python -m transient_transform.window_scan
+```
+
+在同一个物理平移场景中比较 3、5、7 帧窗口，并分别控制每帧曝光和总曝光。记录中心状态与导数的时间偏差、光子噪声和总误差。导数在已测范围内的最低总误差出现在 5 帧、半窗口 0.2 秒；中心状态的最低值出现在扫描边界 7 帧、半窗口 0.3 秒。模拟的 0.1 秒帧间隔不代表硬件可达到的扫描速度。设计、理论误差分解及结果见 [窗口扫描说明](WINDOW_SCAN.md)。
+
 ## 结果
 
 默认输出位于 `results/original_alignment/`：
