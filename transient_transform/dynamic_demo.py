@@ -50,7 +50,7 @@ def prepare_case(name, times, source_dir, target):
                     'error_reference': 'Noise-free LCT of the empirical transient and its exact slope. '
                                        'Original measurement noise and inverse bias remain.'}
         return means, derivative, settings, metadata, None
-    if name not in ('translation', 'expansion'):
+    if name not in ('translation', 'expansion', 'depth_expansion'):
         raise ValueError(f'Unknown dynamic case: {name}')
     settings = SceneSettings(0, f'physical_s_{name}', .35, 64, 512, 16e-12,
                              2.4576, True, .08, 150, 25)
@@ -60,11 +60,17 @@ def prepare_case(name, times, source_dir, target):
         point_velocities = np.broadcast_to(metadata['velocity_m_per_s'], points.shape)
         kind = 'Physical constant-velocity lateral translation; generally non-affine density.'
     else:
+        mode = 'depth' if name == 'depth_expansion' else 'planar'
         means, derivative, points, weights, metadata = expansion_sequence(
-            times, settings, target/'forward_cache.npz')
-        point_velocities = metadata['expansion_rate_per_s']*(
-            points-np.asarray(metadata['expansion_center_m']))
-        kind = 'Physical planar radial expansion with fixed positive point weights.'
+            times, settings, target/'forward_cache.npz', mode=mode)
+        radial = points-np.asarray(metadata['expansion_center_m'])
+        if mode == 'depth':
+            radial[:, :2] = 0.
+        else:
+            radial[:, 2] = 0.
+        point_velocities = metadata['expansion_rate_per_s']*radial
+        kind = ('Physical axial expansion of a three-layer S slab.' if mode == 'depth' else
+                'Physical planar radial expansion with fixed positive point weights.')
     metadata.update(kind=kind,
                     error_reference='Noise-free instantaneous LCT of independently simulated data, '
                                     'including analytic transient derivative. Not calibrated physical density.')
@@ -160,6 +166,102 @@ def save_derivative_maps(maps, width, title, output, units):
     plt.close(fig)
 
 
+def depth_views(target, times, settings, reference_frames, framewise, predicted,
+                reference, adjacent, endpoint, fitted):
+    """Store axial source and reconstruction views before releasing full volumes."""
+    depth = np.linspace(0, settings.range_m/2, settings.m)
+    mask = (depth >= .52)&(depth <= .76)
+    selected_depth = depth[mask]
+    with np.load(target/'source_geometry.npz') as data:
+        points = data['points']
+        weights = data['weights']
+        velocities = data['point_velocities_m_per_s']
+    x_edges = np.linspace(-settings.width_m, settings.width_m, settings.n+1)
+    z_edges = np.linspace(selected_depth[0], selected_depth[-1], 97)
+    source = []
+    for time in times:
+        moved = points+time*velocities
+        raster, _, _ = np.histogram2d(moved[:, 2], moved[:, 0],
+                                      bins=(z_edges, x_edges), weights=weights)
+        source.append(gaussian_filter(raster, (.7, .7)))
+    def side(volume, signed=False):
+        selected = volume[mask]
+        values = selected.sum(axis=1) if signed else np.maximum(selected, 0).max(axis=1)
+        return values[:, ::-1]
+    np.savez_compressed(target/'depth_projections.npz',
+                        source=np.stack(source),
+                        reference=np.stack([side(v) for v in reference_frames]),
+                        original_framewise=np.stack([side(v) for v in framewise]),
+                        ltai=np.stack([side(v) for v in predicted]),
+                        derivative=np.stack([side(v, signed=True) for v in
+                                             (reference[1], adjacent[1], endpoint, fitted[1])]),
+                        z_min=float(selected_depth[0]), z_max=float(selected_depth[-1]),
+                        width_m=settings.width_m, slow_times_s=times)
+
+
+def save_depth_visuals(target):
+    """Render axial motion and signed depth derivative from saved small views."""
+    with np.load(target/'depth_projections.npz') as data:
+        times = data['slow_times_s']
+        panels = [data[key] for key in ('source', 'reference', 'original_framewise', 'ltai')]
+        derivatives = data['derivative']
+        z_min, z_max, width = float(data['z_min']), float(data['z_max']), float(data['width_m'])
+    names = ('True source / x-z', 'Noise-free LCT / x-z',
+             'Original framewise / x-z', 'Quadratic LTAI / x-z')
+    extent = (-width, width, z_max, z_min)
+    reference_max = float(panels[1].max())
+    source_max = float(panels[0].max())
+    chosen = [0, len(times)//2, len(times)-1]
+    fig, axes = plt.subplots(4, 3, figsize=(10, 9), constrained_layout=True)
+    for row, (frames, name) in enumerate(zip(panels, names)):
+        for column, index in enumerate(chosen):
+            ax = axes[row, column]
+            ax.imshow(frames[index], cmap='gray', vmin=0,
+                      vmax=source_max if row == 0 else reference_max,
+                      extent=extent, aspect='auto')
+            ax.set_title(f'{name} / t={times[index]:+.2f} s', fontsize=9)
+            ax.set_xlabel('x (m)')
+            ax.set_ylabel('depth z (m)')
+    fig.suptitle('Axial S expansion / fixed 0.2 s half-window')
+    fig.savefig(target/'depth_motion.png', dpi=150)
+    fig.savefig(target/'depth_motion.svg')
+    plt.close(fig)
+
+    fig, axes = plt.subplots(1, 4, figsize=(13, 3.8), constrained_layout=True)
+    labels = ('Instantaneous noise-free slope', 'Adjacent difference',
+              'Endpoint difference', 'Quadratic LTAI slope')
+    vmax = float(np.max(np.abs(derivatives[0])))
+    for ax, values, name in zip(axes, derivatives, labels):
+        image = ax.imshow(values, cmap='RdBu_r', vmin=-vmax, vmax=vmax,
+                          extent=extent, aspect='auto')
+        ax.set_title(name, fontsize=9)
+        ax.set_xlabel('x (m)')
+        ax.set_ylabel('depth z (m)')
+    fig.colorbar(image, ax=axes, shrink=.7, label='Signed depth derivative / author units per second')
+    fig.savefig(target/'depth_derivative.png', dpi=150)
+    fig.savefig(target/'depth_derivative.svg')
+    plt.close(fig)
+
+    fig, axes = plt.subplots(1, 4, figsize=(13, 3.3), constrained_layout=True)
+    images = []
+    for row, (ax, frames, name) in enumerate(zip(axes, panels, names)):
+        images.append(ax.imshow(frames[0], cmap='gray', vmin=0,
+                                vmax=source_max if row == 0 else reference_max,
+                                extent=extent, aspect='auto'))
+        ax.set_title(name, fontsize=9)
+        ax.set_xlabel('x (m)')
+        ax.set_ylabel('depth z (m)')
+    heading = fig.suptitle('')
+    def update(index):
+        for image, frames in zip(images, panels):
+            image.set_data(frames[index])
+        heading.set_text(f'Axial S expansion / t={times[index]:+.2f} s')
+        return images+[heading]
+    animation = FuncAnimation(fig, update, frames=len(times), interval=500, blit=False)
+    animation.save(target/'depth_motion.gif', writer=PillowWriter(fps=2), dpi=100)
+    plt.close(fig)
+
+
 def render_saved(output):
     """Refresh figures without rerunning forward simulation or Monte Carlo."""
     output = Path(output)
@@ -181,7 +283,7 @@ def render_saved(output):
         settings = result['settings']
         depth = np.linspace(0, settings['range_m']/2, settings['m'])[index]
         source_fronts = None
-        if name in ('translation', 'expansion'):
+        if name in ('translation', 'expansion', 'depth_expansion'):
             with np.load(target/'source_geometry.npz') as data:
                 points, weights = data['points'], data['weights']
                 velocity = (data['point_velocities_m_per_s'] if 'point_velocities_m_per_s' in data
@@ -196,8 +298,11 @@ def render_saved(output):
         save_visuals(fronts, source_fronts, times, settings['width_m'], derivative_maps,
                      'Affine density blend (not motion)' if name == 'affine' else
                      ('Physical S translation / v=0.08 m/s' if name == 'translation' else
-                      'Physical S radial expansion / fixed point weights'),
+                      'Physical S radial expansion / fixed point weights' if name == 'expansion' else
+                      'Physical S axial expansion / fixed point weights'),
                      target, derivative_slices, depth)
+        if name == 'depth_expansion':
+            save_depth_visuals(target)
         result['derivative_display_depth_m'] = float(depth)
         (target/'report.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
         print(f'Rendered {name}: fixed derivative plane z={depth:.3f} m', flush=True)
@@ -316,6 +421,9 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
             np.savez_compressed(target/'projections.npz', reference=selected[0],
                                 original_framewise=selected[1], linear=selected[2], ltai=selected[3],
                                 derivative_maps=np.stack(derivative_maps), slow_times_s=times)
+            if name == 'depth_expansion':
+                depth_views(target, times, settings, reference_frames, framewise, predicted,
+                            reference, adjacent, endpoint, fitted)
             del framewise, predicted, linear_predicted, fit_after_inverse, saved_frames
         if (trial+1) % 3 == 0 or trial+1 == trials:
             print(f'  {name}: {trial+1}/{trials} independent noisy sequences', flush=True)
@@ -360,8 +468,11 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
     save_visuals(selected, source_fronts, times, settings.width_m, derivative_maps,
                  ('Affine density blend (not motion)' if exact_affine else
                   'Physical S translation / v=0.08 m/s' if name == 'translation' else
-                  'Physical S radial expansion / fixed point weights'),
+                  'Physical S radial expansion / fixed point weights' if name == 'expansion' else
+                  'Physical S axial expansion / fixed point weights'),
                  target, derivative_slices, slice_depth)
+    if name == 'depth_expansion':
+        save_depth_visuals(target)
     result = {'settings': settings.metadata(), 'data_model': metadata, 'metrics': metrics,
               'noise_ratios': ratios, 'noiseless_commutation_relative_error': noiseless_commutation,
               'noisy_commutation_relative_error': noisy_commutation,
@@ -409,7 +520,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source-dir', type=Path, default=DEFAULT_ROOT/'cnlos2018')
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument('--cases', nargs='+', choices=('affine', 'translation', 'expansion'),
+    parser.add_argument('--cases', nargs='+', choices=('affine', 'translation', 'expansion', 'depth_expansion'),
                         default=['affine', 'translation'])
     parser.add_argument('--frames', type=int, default=7)
     parser.add_argument('--half-window', type=float, default=.3)

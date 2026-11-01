@@ -32,6 +32,16 @@ def glyph_points(resolution=48, width=.30, depth=.65):
     return points, area_weights
 
 
+def layered_glyph_points(depth=.65, offset=.04):
+    """Three depth layers of the same thin glyph, with conserved total weight."""
+    planar, weights = glyph_points(depth=depth)
+    layers = np.array([-offset, 0., offset])
+    fractions = np.array([.25, .5, .25])
+    points = np.concatenate([planar+np.array([0., 0., shift]) for shift in layers])
+    masses = np.concatenate([weights*fraction for fraction in fractions])
+    return points, masses
+
+
 def confocal_response(points, weights, wall, fast_edges, velocity=None,
                       irf_fwhm_s=60e-12, power=4, wall_batch=128):
     """Return expected bin counts and analytic slow-time derivative before gain."""
@@ -139,17 +149,26 @@ def translation_sequence(times, settings, cache_path):
     return means, derivative, points, weights, description
 
 
-def expansion_sequence(times, settings, cache_path, max_point_speed=.08):
-    """Mass-preserving planar S expansion with point-dependent constant velocity."""
+def expansion_sequence(times, settings, cache_path, max_point_speed=.08, mode='planar'):
+    """Mass-preserving S expansion with point-dependent constant velocity."""
     import hashlib
     import json
     from pathlib import Path
 
     cache_path = Path(cache_path)
     times = np.asarray(times, dtype=np.float64)
-    points, weights = glyph_points()
+    if mode == 'planar':
+        points, weights = glyph_points()
+    elif mode == 'depth':
+        points, weights = layered_glyph_points()
+    else:
+        raise ValueError('Expansion mode must be planar or depth.')
     center = np.average(points, axis=0, weights=weights)
     radial = points-center
+    if mode == 'planar':
+        radial[:, 2] = 0.
+    else:
+        radial[:, :2] = 0.
     max_radius = float(np.max(np.linalg.norm(radial, axis=1)))
     rate = max_point_speed/max_radius
     scales = 1+rate*times
@@ -158,13 +177,15 @@ def expansion_sequence(times, settings, cache_path, max_point_speed=.08):
         raise ValueError('Expansion must have positive finite scale throughout the window.')
     point_velocities = rate*radial
     description = {'geometry': settings.metadata(), 'times': times.tolist(),
+                   'expansion_mode': mode,
                    'expansion_center_m': center.tolist(), 'expansion_rate_per_s': float(rate),
                    'maximum_point_speed_m_per_s': float(max_point_speed),
                    'minimum_scale': float(np.min(scales)), 'maximum_scale': float(np.max(scales)),
                    'weight_convention': 'Fixed positive point weights; total reflectivity mass conserved.',
                    'irf_fwhm_s': 60e-12, 'radiometric_power': 4,
                    'reference_expected_photons': 4500000., 'quadrature_points': len(points),
-                   'source': 'Thin S surface / planar radial expansion',
+                   'source': ('Thin S surface / planar radial expansion' if mode == 'planar' else
+                              'Three-layer S slab / axial expansion'),
                    'wall_x_descending': True,
                    'generator_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
     key = json.dumps(description, sort_keys=True)
@@ -187,7 +208,7 @@ def expansion_sequence(times, settings, cache_path, max_point_speed=.08):
         if time == 0:
             response = central
         else:
-            response, _ = confocal_response(center+scales[index]*radial, weights, wall, edges)
+            response, _ = confocal_response(points+(scales[index]-1)*radial, weights, wall, edges)
         means.append((gain*response).reshape(shape).transpose(2, 0, 1))
         print(f'  Physical expansion frame {index+1}/{len(times)}: t={time:+.3f} s', flush=True)
     means = np.stack(means)

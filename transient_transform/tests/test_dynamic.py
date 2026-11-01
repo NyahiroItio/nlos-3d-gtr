@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from transient_transform.motion_simulation import C, confocal_response
+from transient_transform.motion_simulation import C, confocal_response, glyph_points, layered_glyph_points
 from transient_transform.temporal_fit import (AffineTransientEstimator,
     PolynomialTransientEstimator, fit_weights, centered_difference_weights)
 
@@ -92,6 +92,14 @@ class TemporalChecks(unittest.TestCase):
 
 
 class MotionPhysicsChecks(unittest.TestCase):
+    def test_depth_layers_preserve_glyph_weights_and_lateral_shape(self):
+        base, weights = glyph_points()
+        layered, masses = layered_glyph_points()
+        self.assertEqual(len(layered), 3*len(base))
+        np.testing.assert_allclose(layered[:, :2], np.tile(base[:, :2], (3, 1)))
+        np.testing.assert_allclose(np.unique(layered[:, 2]), [.61, .65, .69])
+        self.assertAlmostEqual(float(masses.sum()), float(weights.sum()))
+
     def test_integrated_photons_and_flight_time_of_single_scatterer(self):
         points = np.array([[0., 0., .6]])
         wall = np.array([[0., 0., 0.]])
