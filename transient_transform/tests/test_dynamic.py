@@ -115,3 +115,19 @@ class MotionPhysicsChecks(unittest.TestCase):
         finite_difference = (plus-minus)/(2*step)
         self.assertLess(np.linalg.norm(finite_difference-derivative)/np.linalg.norm(derivative), 1e-5)
         self.assertTrue(np.any(derivative > 0) and np.any(derivative < 0))
+
+    def test_point_dependent_expansion_derivative_matches_finite_difference(self):
+        points = np.array([[-.04, .02, .60], [.05, -.01, .64]])
+        weights = np.array([.01, .02])
+        wall = np.array([[0., 0., 0.], [.08, -.03, 0.]])
+        edges = np.arange(1001)*8e-12
+        center = np.array([0., 0., .62])
+        velocities = .5*(points-center)
+        _, derivative = confocal_response(points, weights, wall, edges, velocities)
+        step = 1e-5
+        plus, _ = confocal_response(points+step*velocities, weights, wall, edges)
+        minus, _ = confocal_response(points-step*velocities, weights, wall, edges)
+        finite_difference = (plus-minus)/(2*step)
+        self.assertLess(np.linalg.norm(finite_difference-derivative)/np.linalg.norm(derivative), 1e-5)
+        with self.assertRaises(ValueError):
+            confocal_response(points, weights, wall, edges, np.zeros((3, 3)))

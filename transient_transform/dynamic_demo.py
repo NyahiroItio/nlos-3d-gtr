@@ -1,4 +1,4 @@
-"""Dynamic quadratic LTAI validation: affine blend and physical translation."""
+"""Dynamic quadratic LTAI validation: affine blend, translation and expansion."""
 
 import argparse
 from dataclasses import replace
@@ -13,7 +13,7 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from threadpoolctl import threadpool_limits
 
-from .motion_simulation import translation_sequence
+from .motion_simulation import expansion_sequence, translation_sequence
 from .original_demo import relative_error
 from .original_lct import OriginalLCT, SceneSettings, load_scene
 from .temporal_fit import PolynomialTransientEstimator, fit_weights, centered_difference_weights
@@ -50,19 +50,30 @@ def prepare_case(name, times, source_dir, target):
                     'error_reference': 'Noise-free LCT of the empirical transient and its exact slope. '
                                        'Original measurement noise and inverse bias remain.'}
         return means, derivative, settings, metadata, None
-    settings = SceneSettings(0, 'physical_s_translation', .35, 64, 512, 16e-12,
+    if name not in ('translation', 'expansion'):
+        raise ValueError(f'Unknown dynamic case: {name}')
+    settings = SceneSettings(0, f'physical_s_{name}', .35, 64, 512, 16e-12,
                              2.4576, True, .08, 150, 25)
-    means, derivative, points, weights, metadata = translation_sequence(times, settings,
-                                                                       target/'forward_cache.npz')
-    metadata.update(kind='Physical constant-velocity lateral translation; generally non-affine density.',
+    if name == 'translation':
+        means, derivative, points, weights, metadata = translation_sequence(
+            times, settings, target/'forward_cache.npz')
+        point_velocities = np.broadcast_to(metadata['velocity_m_per_s'], points.shape)
+        kind = 'Physical constant-velocity lateral translation; generally non-affine density.'
+    else:
+        means, derivative, points, weights, metadata = expansion_sequence(
+            times, settings, target/'forward_cache.npz')
+        point_velocities = metadata['expansion_rate_per_s']*(
+            points-np.asarray(metadata['expansion_center_m']))
+        kind = 'Physical planar radial expansion with fixed positive point weights.'
+    metadata.update(kind=kind,
                     error_reference='Noise-free instantaneous LCT of independently simulated data, '
                                     'including analytic transient derivative. Not calibrated physical density.')
     np.savez_compressed(target/'source_geometry.npz', points=points, weights=weights,
-                        velocity_m_per_s=metadata['velocity_m_per_s'], slow_times_s=times)
+                        point_velocities_m_per_s=point_velocities, slow_times_s=times)
     edges = np.linspace(-settings.width_m, settings.width_m, 129)
     source_fronts = []
     for time in times:
-        moved = points+time*np.asarray(metadata['velocity_m_per_s'])
+        moved = points+time*point_velocities
         raster, _, _ = np.histogram2d(moved[:, 1], moved[:, 0], bins=(edges, edges), weights=weights)
         source_fronts.append(gaussian_filter(raster, .7))
     return means, derivative, settings, metadata, np.stack(source_fronts)
@@ -170,9 +181,11 @@ def render_saved(output):
         settings = result['settings']
         depth = np.linspace(0, settings['range_m']/2, settings['m'])[index]
         source_fronts = None
-        if name == 'translation':
+        if name in ('translation', 'expansion'):
             with np.load(target/'source_geometry.npz') as data:
-                points, weights, velocity = data['points'], data['weights'], data['velocity_m_per_s']
+                points, weights = data['points'], data['weights']
+                velocity = (data['point_velocities_m_per_s'] if 'point_velocities_m_per_s' in data
+                            else data['velocity_m_per_s'])
             edges = np.linspace(-settings['width_m'], settings['width_m'], 129)
             source_fronts = []
             for time in times:
@@ -182,7 +195,9 @@ def render_saved(output):
             source_fronts = np.stack(source_fronts)
         save_visuals(fronts, source_fronts, times, settings['width_m'], derivative_maps,
                      'Affine density blend (not motion)' if name == 'affine' else
-                     'Physical S translation / v=0.08 m/s', target, derivative_slices, depth)
+                     ('Physical S translation / v=0.08 m/s' if name == 'translation' else
+                      'Physical S radial expansion / fixed point weights'),
+                     target, derivative_slices, depth)
         result['derivative_display_depth_m'] = float(depth)
         (target/'report.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
         print(f'Rendered {name}: fixed derivative plane z={depth:.3f} m', flush=True)
@@ -343,7 +358,10 @@ def run_case(name, times, source_dir, output, exposure, trials, seed):
         checks['physical_reference_depth'] = bool(abs(np.linspace(0, settings.range_m/2, settings.m)[
             np.argmax(np.maximum(reference[0], 0).max(axis=(1, 2)))]-.65) < .02)
     save_visuals(selected, source_fronts, times, settings.width_m, derivative_maps,
-                 'Affine density blend (not motion)' if exact_affine else 'Physical S translation / v=0.08 m/s', target, derivative_slices, slice_depth)
+                 ('Affine density blend (not motion)' if exact_affine else
+                  'Physical S translation / v=0.08 m/s' if name == 'translation' else
+                  'Physical S radial expansion / fixed point weights'),
+                 target, derivative_slices, slice_depth)
     result = {'settings': settings.metadata(), 'data_model': metadata, 'metrics': metrics,
               'noise_ratios': ratios, 'noiseless_commutation_relative_error': noiseless_commutation,
               'noisy_commutation_relative_error': noisy_commutation,
@@ -391,7 +409,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source-dir', type=Path, default=DEFAULT_ROOT/'cnlos2018')
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument('--cases', nargs='+', choices=('affine', 'translation'), default=['affine', 'translation'])
+    parser.add_argument('--cases', nargs='+', choices=('affine', 'translation', 'expansion'),
+                        default=['affine', 'translation'])
     parser.add_argument('--frames', type=int, default=7)
     parser.add_argument('--half-window', type=float, default=.3)
     parser.add_argument('--exposure', type=float, default=1.)

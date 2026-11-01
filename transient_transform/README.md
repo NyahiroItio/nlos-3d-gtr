@@ -30,7 +30,7 @@ python -m unittest discover -s transient_transform/tests -v
 python -m transient_transform.static_mean
 ```
 
-使用原版 S/U 与漫反射 S 测量作为固定的经验期望，模拟 7 次独立计数曝光，比较原版单帧与 LTAI 静态平均。另有相同总曝光量的原版对照。默认 16 组随机序列，CPU 两个线程；当前测试共 18 项。
+使用原版 S/U 与漫反射 S 测量作为固定的经验期望，模拟 7 次独立计数曝光，比较原版单帧与 LTAI 静态平均。另有相同总曝光量的原版对照。默认 16 组随机序列，CPU 两个线程；当前测试共 22 项。
 
 结果在 `results/static_mean/`，包含重建三视图、噪声缩放图、观测与有符号体积、验证报告。这里验证相对于原版测量的平均估计，不声称消除了该测量自身的噪声或验证了真实密度。方法与判据见 [静态平均验证说明](STATIC_MEAN.md)。
 
@@ -43,6 +43,14 @@ python -m transient_transform.dynamic_demo
 包含严格线性的密度淡入/淡出，以及从独立飞行时间模型生成的 S 平移。默认采用二阶慢时间拟合，与使用同一批计数的线性拟合、原版逐帧重建及相邻/首尾差分比较，输出 GIF、时间帧对比、有符号变化率图及偏差/噪声报告。默认 7 帧、12 组噪声序列、2 个 CPU 线程，原生体积仍为 64×64×512。
 
 方法、数据假设、曝光预算和物理验证边界见 [动态验证说明](DYNAMIC_VALIDATION.md)。
+
+固定 5 帧、半窗口 0.2 秒的**平面径向膨胀**实验可单独运行：
+
+```powershell
+python -m transient_transform.dynamic_demo --cases expansion --frames 5 --half-window 0.2 --trials 12 --output transient_transform/results/expansion_fixed_h02
+```
+
+最外侧散射点速度为 0.08 m/s，点权重守恒。中心状态与一阶导数总误差分别为约 3.08% 和 15.87%，具体定义及与平动的匹配对照见 [动态验证说明](DYNAMIC_VALIDATION.md)。
 
 ## 二阶拟合窗口扫描
 

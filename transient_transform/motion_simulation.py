@@ -43,6 +43,9 @@ def confocal_response(points, weights, wall, fast_edges, velocity=None,
     if np.any(weights < 0) or len(points) != len(weights):
         raise ValueError('Quadrature weights must be nonnegative and match the points.')
     velocity = np.zeros(3) if velocity is None else np.asarray(velocity)
+    if (velocity.shape not in ((3,), points.shape) or
+            not np.all(np.isfinite(velocity))):
+        raise ValueError('Velocity must be a finite common 3-vector or one 3-vector per point.')
     bins = len(edges)-1
     dt = edges[1]-edges[0]
     radius = int(np.ceil(6*sigma/dt))+1
@@ -56,7 +59,13 @@ def confocal_response(points, weights, wall, fast_edges, velocity=None,
         distance = np.linalg.norm(delta, axis=-1)
         if np.any(distance <= 0):
             raise ValueError('Scatterers must be separated from the measurement wall.')
-        radial_speed = np.einsum('wpi,i->wp', delta, velocity)/distance if need_rate else 0.
+        if need_rate:
+            if velocity.ndim == 1:
+                radial_speed = np.einsum('wpi,i->wp', delta, velocity)/distance
+            else:
+                radial_speed = np.einsum('wpi,pi->wp', delta, velocity)/distance
+        else:
+            radial_speed = 0.
         arrival = 2*distance/C
         arrival_rate = 2*radial_speed/C
         amplitude = weights[None]/distance**power
@@ -127,4 +136,63 @@ def translation_sequence(times, settings, cache_path):
     # determine it. Cached arrays retain the same count scale across frames.
     np.savez_compressed(cache_path, key=key, means=means, instantaneous_derivative=derivative,
                         exposure_gain=gain)
+    return means, derivative, points, weights, description
+
+
+def expansion_sequence(times, settings, cache_path, max_point_speed=.08):
+    """Mass-preserving planar S expansion with point-dependent constant velocity."""
+    import hashlib
+    import json
+    from pathlib import Path
+
+    cache_path = Path(cache_path)
+    times = np.asarray(times, dtype=np.float64)
+    points, weights = glyph_points()
+    center = np.average(points, axis=0, weights=weights)
+    radial = points-center
+    max_radius = float(np.max(np.linalg.norm(radial, axis=1)))
+    rate = max_point_speed/max_radius
+    scales = 1+rate*times
+    if (not np.all(np.isfinite(times)) or max_point_speed <= 0 or
+            not np.all(np.isfinite(scales)) or np.min(scales) <= 0):
+        raise ValueError('Expansion must have positive finite scale throughout the window.')
+    point_velocities = rate*radial
+    description = {'geometry': settings.metadata(), 'times': times.tolist(),
+                   'expansion_center_m': center.tolist(), 'expansion_rate_per_s': float(rate),
+                   'maximum_point_speed_m_per_s': float(max_point_speed),
+                   'minimum_scale': float(np.min(scales)), 'maximum_scale': float(np.max(scales)),
+                   'weight_convention': 'Fixed positive point weights; total reflectivity mass conserved.',
+                   'irf_fwhm_s': 60e-12, 'radiometric_power': 4,
+                   'reference_expected_photons': 4500000., 'quadrature_points': len(points),
+                   'source': 'Thin S surface / planar radial expansion',
+                   'wall_x_descending': True,
+                   'generator_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest()}
+    key = json.dumps(description, sort_keys=True)
+    if cache_path.exists():
+        with np.load(cache_path, allow_pickle=False) as cached:
+            if str(cached['key']) == key:
+                print('Physical expansion: using verified parameter/source cache.', flush=True)
+                description['exposure_gain'] = float(cached['exposure_gain'])
+                return cached['means'], cached['instantaneous_derivative'], points, weights, description
+    axis = np.linspace(-settings.width_m, settings.width_m, settings.n)
+    wx, wy = np.meshgrid(axis[::-1], axis, indexing='xy')
+    wall = np.column_stack((wx.ravel(), wy.ravel(), np.zeros(wx.size)))
+    edges = np.arange(settings.m+1)*settings.bin_resolution_s
+    central, derivative = confocal_response(points, weights, wall, edges, point_velocities)
+    gain = description['reference_expected_photons']/central.sum()
+    shape = (settings.n, settings.n, settings.m)
+    derivative = (gain*derivative).reshape(shape).transpose(2, 0, 1)
+    means = []
+    for index, time in enumerate(times):
+        if time == 0:
+            response = central
+        else:
+            response, _ = confocal_response(center+scales[index]*radial, weights, wall, edges)
+        means.append((gain*response).reshape(shape).transpose(2, 0, 1))
+        print(f'  Physical expansion frame {index+1}/{len(times)}: t={time:+.3f} s', flush=True)
+    means = np.stack(means)
+    description['exposure_gain'] = float(gain)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(cache_path, key=key, means=means,
+                        instantaneous_derivative=derivative, exposure_gain=gain)
     return means, derivative, points, weights, description
