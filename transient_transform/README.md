@@ -60,6 +60,14 @@ python -m transient_transform.dynamic_demo --cases depth_expansion --frames 5 --
 
 三层 S 形薄体在深度方向收缩/膨胀。结果另有 `depth_motion.png`、`depth_motion.gif` 与 `depth_derivative.png`，用 \(x\)-\(z\) 剖面显示正面图看不出的轴向运动。此场景的一阶导数总误差约 58.33%，主要由固定 0.2 秒窗口的时间近似偏差造成；详见 [动态验证说明](DYNAMIC_VALIDATION.md)。
 
+基于该实验保存的瞬态，可以复查轴向伸缩先验和点响应位置导数匹配：
+
+```powershell
+python -m transient_transform.axial_prior_probe --trials 12
+```
+
+层间距能准确估计这组数据的全局膨胀率；直接对 LCT 体积做空间输运微分却明显劣于原时间拟合。原始瞬态上的点响应导数模板能在已知横向坐标处定位两个运动层，但尚不是通用速度重建。方法与完整误差见 [轴向先验试验](AXIAL_PRIOR_PROBE.md)。
+
 ## 二阶拟合窗口扫描
 
 ```powershell
@@ -90,6 +98,7 @@ python -m transient_transform.window_scan
 | `static_mean.py` | 流式静态均值估计、原版/新版本比较及曝光预算验证 |
 | `temporal_fit.py`、`dynamic_demo.py` | 联合参考/斜率估计、动态对比与动画 |
 | `motion_simulation.py` | 独立的空间点飞行时间与仪器响应模拟 |
+| `axial_prior_probe.py` | 轴向层间距估计、输运导数对照和原始瞬态的单点导数匹配 |
 | `upstream.py` | 下载、缓存和校验固定版本的作者工程与数据 |
 | `reference.py` | 生成 MATLAB 对照脚本及导出冻结参考 |
 | `tests/test_original_lct.py` | 当前基线的 6 项数值验证 |
