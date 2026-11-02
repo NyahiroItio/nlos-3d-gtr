@@ -3,6 +3,7 @@ import unittest
 import numpy as np
 
 from transient_transform.motion_simulation import C, confocal_response, glyph_points, layered_glyph_points
+from transient_transform.finite_shift_probe import point_frames
 from transient_transform.temporal_fit import (AffineTransientEstimator,
     PolynomialTransientEstimator, fit_weights, centered_difference_weights)
 
@@ -92,6 +93,19 @@ class TemporalChecks(unittest.TestCase):
 
 
 class MotionPhysicsChecks(unittest.TestCase):
+    def test_finite_shift_template_matches_independent_point_forward_model(self):
+        xy = np.array([.015, -.02])
+        wall = np.array([[0., 0., 0.], [.08, -.04, 0.]])
+        times = np.array([-.2, 0., .2])
+        edges = np.arange(513)*16e-12
+        template = point_frames(xy, .64, -.075, wall, times, edges)
+        for index, time in enumerate(times):
+            points = np.array([[xy[0], xy[1], .64-.075*time]])
+            expected, _ = confocal_response(points, np.ones(1), wall, edges,
+                                             power=4, wall_batch=2)
+            # The original simulator truncates the Gaussian beyond 6 sigma.
+            np.testing.assert_allclose(template[index], expected, rtol=1e-11, atol=1e-10)
+
     def test_depth_layers_preserve_glyph_weights_and_lateral_shape(self):
         base, weights = glyph_points()
         layered, masses = layered_glyph_points()

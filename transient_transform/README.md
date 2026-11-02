@@ -30,7 +30,7 @@ python -m unittest discover -s transient_transform/tests -v
 python -m transient_transform.static_mean
 ```
 
-使用原版 S/U 与漫反射 S 测量作为固定的经验期望，模拟 7 次独立计数曝光，比较原版单帧与 LTAI 静态平均。另有相同总曝光量的原版对照。默认 16 组随机序列，CPU 两个线程；当前测试共 23 项。
+使用原版 S/U 与漫反射 S 测量作为固定的经验期望，模拟 7 次独立计数曝光，比较原版单帧与 LTAI 静态平均。另有相同总曝光量的原版对照。默认 16 组随机序列，CPU 两个线程；当前测试共 24 项。
 
 结果在 `results/static_mean/`，包含重建三视图、噪声缩放图、观测与有符号体积、验证报告。这里验证相对于原版测量的平均估计，不声称消除了该测量自身的噪声或验证了真实密度。方法与判据见 [静态平均验证说明](STATIC_MEAN.md)。
 
@@ -68,6 +68,14 @@ python -m transient_transform.axial_prior_probe --trials 12
 
 层间距能准确估计这组数据的全局膨胀率；直接对 LCT 体积做空间输运微分却明显劣于原时间拟合。原始瞬态上的点响应导数模板能在已知横向坐标处定位两个运动层，但尚不是通用速度重建。方法与完整误差见 [轴向先验试验](AXIAL_PRIOR_PROBE.md)。
 
+在同一批五帧原始瞬态上进一步检验有限位移模板：
+
+```powershell
+python -m transient_transform.finite_shift_probe
+```
+
+匹配图直接扫描候选深度与轴向速度，不先估计瞬时导数。离网格单点及三层场景的 12 组泊松序列均给出接近真值的主峰；单点也会产生较弱的假次峰，因此这仍是已知横向位置的检测实验。见 [有限位移试验](FINITE_SHIFT_PROBE.md)。
+
 ## 二阶拟合窗口扫描
 
 ```powershell
@@ -99,6 +107,7 @@ python -m transient_transform.window_scan
 | `temporal_fit.py`、`dynamic_demo.py` | 联合参考/斜率估计、动态对比与动画 |
 | `motion_simulation.py` | 独立的空间点飞行时间与仪器响应模拟 |
 | `axial_prior_probe.py` | 轴向层间距估计、输运导数对照和原始瞬态的单点导数匹配 |
+| `finite_shift_probe.py` | 原始五帧瞬态的深度–轴向速度有限位移模板匹配 |
 | `upstream.py` | 下载、缓存和校验固定版本的作者工程与数据 |
 | `reference.py` | 生成 MATLAB 对照脚本及导出冻结参考 |
 | `tests/test_original_lct.py` | 当前基线的 6 项数值验证 |
