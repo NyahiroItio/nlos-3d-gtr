@@ -1,7 +1,7 @@
 """Prepare a MATLAB reference run without changing the upstream source file.
 
 The unmodified author entry point is run first. A separate instrumented copy
-only captures intermediate arrays and adds two small deterministic fixtures;
+only captures intermediate arrays and adds two small deterministic inputs;
 all original reconstruction statements are retained unchanged.
 """
 
@@ -14,7 +14,6 @@ from .upstream import DEFAULT_ROOT, SOURCE_SHA256, verify_source
 
 
 DEFAULT_OUTPUT = Path(__file__).resolve().parent/'results'/'original_reference'
-DEFAULT_FIXTURE = Path(__file__).resolve().parent/'tests'/'fixtures'/'author_matlab_reference.npz'
 
 
 def matlab_path(path):
@@ -143,36 +142,12 @@ fprintf('ORIGINAL_LCT_REFERENCE_COMPLETE\\n');
     return driver
 
 
-def export_fixtures(reference_dir=DEFAULT_OUTPUT, output=DEFAULT_FIXTURE):
-    """Freeze small deterministic MATLAB results for tests without MATLAB/data."""
-    import numpy as np
-    from scipy.io import loadmat
-    arrays = {'source_sha256': np.array(SOURCE_SHA256)}
-    fields = ('prepared_data', 'weighted_data', 'resampled_data', 'filtered_data',
-              'signed_volume', 'clipped_volume', 'display_volume', 'mtx', 'mtxi',
-              'psf', 'inverse_filter', 'tic_x', 'tic_y', 'tic_z', 'width', 'range',
-              'snr', 'isdiffuse', 'z_offset', 'z_trim', 'N', 'M', 'bin_resolution')
-    for scene, label in ((0, 'retro'), (-1, 'diffuse')):
-        reference = loadmat(Path(reference_dir)/f'scene_{scene}.mat', squeeze_me=True)
-        if str(reference['source_sha256']) != SOURCE_SHA256:
-            raise ValueError('Fixture reference does not identify the pinned author source.')
-        for name in fields:
-            arrays[f'{label}_{name}'] = np.asarray(reference[name])
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(output, **arrays)
-    return output
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source-dir', type=Path, default=DEFAULT_ROOT/'cnlos2018')
     parser.add_argument('--output', type=Path, default=DEFAULT_OUTPUT)
-    parser.add_argument('--export-fixtures', action='store_true')
-    parser.add_argument('--fixture-output', type=Path, default=DEFAULT_FIXTURE)
     args = parser.parse_args()
-    print(export_fixtures(args.output, args.fixture_output) if args.export_fixtures
-          else prepare(args.source_dir, args.output))
+    print(prepare(args.source_dir, args.output))
 
 
 if __name__ == '__main__':

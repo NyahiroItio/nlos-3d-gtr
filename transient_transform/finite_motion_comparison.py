@@ -1,8 +1,9 @@
 """Compare slope compression with finite-motion fitting on one known S geometry.
 
 This is an oracle mechanism test: planar point positions, reflectivity weights,
-motion center, IRF, and exposure gain are supplied. Only the global maximum
-point speed is selected from a grid. It is not a general dynamic inversion.
+motion center, and IRF are supplied. The global maximum point speed is selected
+from a grid; the common gain is either supplied or fitted. It is not a general
+dynamic inversion.
 """
 
 import argparse

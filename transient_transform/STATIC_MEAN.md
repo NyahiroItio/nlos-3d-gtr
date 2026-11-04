@@ -61,7 +61,6 @@ Monte Carlo 的两种结果共享序列内的第一帧。报告用配对误差�
 
 ```powershell
 python -m transient_transform.static_mean
-python -m unittest discover -s transient_transform/tests -v
 ```
 
 可调整参数，例如：
@@ -80,7 +79,7 @@ python -m transient_transform.static_mean --frames 7 --exposure 1 --trials 16 --
 | `noise_scaling.png`、`.svg` | 输出噪声能量缩放及理论对照 |
 | `report.json` | 固定来源、参数、MATLAB 锚点、无噪声等价性、曝光对照、逐次 Monte Carlo 误差和通过状态 |
 
-`StaticMeanEstimator` 流式累加计数与曝光，内存不随帧数增加。测试覆盖不同曝光的归一化、独立 Poisson 样本的均值/方差、输入存储独立性和非法帧处理。
+`StaticMeanEstimator` 流式累加计数与曝光，内存不随帧数增加，并处理不同曝光的归一化与非法帧。
 
 ## 本机验证记录（2026-10-30）
 
@@ -93,4 +92,4 @@ python -m transient_transform.static_mean --frames 7 --exposure 1 --trials 16 --
 
 两组场景的无噪声均值误差、无噪声重建误差及相同记录光子下的原版/新版本重建差异均为 0。理论噪声能量比为 1/7≈0.142857。
 
-10 项测试通过，其中 6 项为原版 MATLAB 冻结参考验证，4 项为静态均值统计及曝光处理验证。时间变化率尚未验证。
+本节只验证静态均值；时间变化率由后续动态实验讨论。

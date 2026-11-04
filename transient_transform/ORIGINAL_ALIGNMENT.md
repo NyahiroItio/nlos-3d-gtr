@@ -12,7 +12,6 @@
 - 分别重建原始 S/U（逆反射）与漫反射 S 数据，原生体积为 64×64×512。
 - 对照 MATLAB 的辐射加权、时间重采样、滤波、深度变换、正值截断、裁剪与翻转，Python 与 MATLAB 完整体积输出相差约 1e-15。
 - MATLAB 兼容入口和只加入数组导出的参考副本，生成的 S/U PNG 像素完全相同。
-- 6 项自动测试使用实际 MATLAB 输出的冻结样例验证原版路径；运行这些测试不需要安装 MATLAB。
 
 这证明工程实现对齐，不等于已经验证动态形变算法、绝对反射率标定或材料速度场。
 
@@ -30,9 +29,9 @@ original cnlos_reconstruction.m SHA-256:
 824275cb1fbb5c33751781b7b7498d7c793a92dc07a456670ec169e38ea6b1f6
 ```
 
-上游源代码和原始数据保存在已忽略的 `results/upstream/`，不作为本项目的 MIT 软件重新分发。压缩包没有单独的许可证文件；这里保留下载来源、校验值和原文件，仅提交本项目实现、验证工具及小型确定性数值参考。不要把后来的仓库许可证自动套到这个压缩包。
+上游源代码和原始数据保存在已忽略的 `results/upstream/`，不作为本项目的 MIT 软件重新分发。压缩包没有单独的许可证文件；这里保留下载来源、校验值和原文件，仅提交本项目实现及仿真/对照工具。不要把后来的仓库许可证自动套到这个压缩包。
 
-实际 MATLAB 导出参考位于 `results/original_reference/`；`provenance.json` 记录原始源文件、兼容变动及参考副本校验值。参考副本仅增加变量声明、数组导出和两个小型测试输入，保留原版重建运算。
+实际 MATLAB 导出参考位于 `results/original_reference/`；`provenance.json` 记录原始源文件、兼容变动及参考副本校验值。参考副本仅增加变量声明、数组导出和两个小型诊断输入，保留原版重建运算。
 
 ## 3. 运行与查看图像
 
@@ -52,7 +51,7 @@ python -m transient_transform.demo
 python -m transient_transform.original_demo --scenes 7 9
 ```
 
-其他原版场景可通过 `--scenes` 选择。默认数据包还包含 Exit、分辨率板、点阵、人形、室外 S、Bunny。Bunny 的 256×256 横向网格需要显著更多内存，不作为默认测试。
+其他原版场景可通过 `--scenes` 选择。默认数据包还包含 Exit、分辨率板、点阵、人形、室外 S、Bunny。Bunny 的 256×256 横向网格需要显著更多内存，不作为默认运行场景。
 
 默认输出：
 
@@ -119,7 +118,7 @@ PSF、重采样和各线性阶段采用 float64。Python 用实数 FFT 减少内
 
 通过标准：全部被核验阶段的相对误差 <1e-9，参数、尺寸与模式一致。`report.json` 会显式标记 MATLAB 参考是否存在；缺少参考时只生成图像，不谎报已经在当前机器完成完整场景数值核验。
 
-## 6. 重新生成 MATLAB 参考与小型测试样例
+## 6. 重新生成 MATLAB 对照结果
 
 ```powershell
 python -m transient_transform.reference
@@ -129,16 +128,14 @@ python -m transient_transform.reference
 
 ```powershell
 matlab -batch "run('F:/deformable NLOS/nlos-3d-gtr/transient_transform/results/original_reference/run_reference.m')"
-python -m transient_transform.reference --export-fixtures
-python -m unittest discover -s transient_transform/tests -v
 ```
 
 MATLAB 脚本先尝试未改动的作者入口并记录状态；在本机 R2024b 上，它因 `width` 的隐式加载／同名函数解析失败。接着运行仅增加 `width=[]` 的兼容副本，重建 S/U；再导出两个小型参考输入及两个完整原始场景。兼容声明不改变真实加载的 `width` 值。
 
-被冻结的小型参考位于 `tests/fixtures/author_matlab_reference.npz`，约 50 KiB。它由 MATLAB 产生，不由待测 Python 算法生成，包含 PSF、滤波器、两套重采样权重、逐阶段数组及后处理结果，因此后续测试可以脱离 MATLAB 和大数据运行。
+完整场景的 MATLAB 阶段数组保存在已忽略的 `results/original_reference/` 中，可由 `demo` 入口读取并与 Python 输出核对。
 
 ## 7. 与后续时序研究的接口
 
-`OriginalLCT.__call__()` 返回未施加非负截断的线性结果；静态显示才通过 `display_volume(..., clip=True)` 复现原版后处理。已在小型参考和完整数据上验证有符号线性，以及时间拟合与固定线性逆的交换性。
+`OriginalLCT.__call__()` 返回未施加非负截断的线性结果；静态显示才通过 `display_volume(..., clip=True)` 复现原版后处理。已在完整数据上核对有符号线性，以及时间拟合与固定线性逆的交换性。
 
 这为之后接入 rho_0 / dot(rho) 提供已验证的后端。当前入口只做原版静态基线，尚未实现动态合成、逐扫描时间拟合或速度场恢复。

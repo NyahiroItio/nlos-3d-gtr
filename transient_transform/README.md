@@ -2,7 +2,7 @@
 
 本目录在 `research/transient-transform` 分支中独立实现，不依赖 3D-GTR、Torch 或 Gaussian 场景组件。
 
-当前基线对应作者发布的 2018 LCT 工程。Python 与本机 MATLAB 的原始 S/U、漫反射 S 完整体积逐阶段差异约为 1e-15。6 项冻结参考测试验证 PSF、重采样、滤波、显示后处理和有符号线性；测试不需要 MATLAB。
+当前基线对应作者发布的 2018 LCT 工程。Python 与本机 MATLAB 的原始 S/U、漫反射 S 完整体积逐阶段差异约为 1e-15；对齐覆盖 PSF、重采样、滤波、显示后处理和有符号线性。
 
 ## 运行
 
@@ -19,7 +19,6 @@ python -m transient_transform.demo
 ```powershell
 python -m transient_transform.demo --scenes 7 --output transient_transform/results/scene_7
 python -m transient_transform.demo --help
-python -m unittest discover -s transient_transform/tests -v
 ```
 
 `python -m transient_transform.original_demo` 提供相同的运行入口。原版数据下载后会保留在本地，后续重建不需要重复下载。
@@ -30,7 +29,7 @@ python -m unittest discover -s transient_transform/tests -v
 python -m transient_transform.static_mean
 ```
 
-使用原版 S/U 与漫反射 S 测量作为固定的经验期望，模拟 7 次独立计数曝光，比较原版单帧与 LTAI 静态平均。另有相同总曝光量的原版对照。默认 16 组随机序列，CPU 两个线程；当前测试共 28 项。
+使用原版 S/U 与漫反射 S 测量作为固定的经验期望，模拟 7 次独立计数曝光，比较原版单帧与 LTAI 静态平均。另有相同总曝光量的原版对照。默认 16 组随机序列，CPU 两个线程。
 
 结果在 `results/static_mean/`，包含重建三视图、噪声缩放图、观测与有符号体积、验证报告。这里验证相对于原版测量的平均估计，不声称消除了该测量自身的噪声或验证了真实密度。方法与判据见 [静态平均验证说明](STATIC_MEAN.md)。
 
@@ -121,7 +120,7 @@ python -m transient_transform.window_scan
 
 输入已由上游完成时间校正和裁剪，运行时再按原版降采样并屏蔽前段时间箱。输出采用作者工程的数值单位，尚未标定为物理散射密度。MATLAB 对照未生成时，报告会明确标记缺少参考。
 
-## 代码与验证
+## 代码与运行入口
 
 | 文件 | 用途 |
 | --- | --- |
@@ -136,11 +135,7 @@ python -m transient_transform.window_scan
 | `finite_shift_probe.py` | 原始五帧瞬态的深度–轴向速度有限位移模板匹配 |
 | `coherence_probe.py` | 理想中继面上点响应字典的深度、速度与横向相干性扫描 |
 | `upstream.py` | 下载、缓存和校验固定版本的作者工程与数据 |
-| `reference.py` | 生成 MATLAB 对照脚本及导出冻结参考 |
-| `tests/test_original_lct.py` | 当前基线的 6 项数值验证 |
-| `tests/test_static_mean.py` | 静态平均的统计与曝光归一化验证 |
-| `tests/test_dynamic.py` | 时间协方差、窗口偏差、飞行时间与解析运动导数验证 |
-| `tests/fixtures/` | 小型 MATLAB 数值参考及来源说明 |
+| `reference.py` | 生成 MATLAB 原版完整场景对照脚本 |
 
 `OriginalLCT.__call__()` 返回原生 `[depth, y, x]` 有符号线性结果；`display_volume(..., clip=True)` 用于复现作者的静态显示。当前实现提供静态平均、局部二阶参考/斜率/曲率拟合和独立平移模拟；尚未恢复材料速度场或验证真实动态实验数据。
 

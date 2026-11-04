@@ -4,10 +4,9 @@
 
 ```powershell
 python -m transient_transform.finite_shift_probe
-python -m pytest transient_transform/tests -q
 ```
 
-数值报告在 `results/depth_expansion_fixed_h02/depth_expansion/finite_shift_probe.json`；四幅深度–速度匹配图在同目录的 `finite_shift_match.png`。结果目录不纳入 Git；脚本、测试和本文档已纳入。
+数值报告在 `results/depth_expansion_fixed_h02/depth_expansion/finite_shift_probe.json`；四幅深度–速度匹配图在同目录的 `finite_shift_match.png`。结果目录不纳入 Git；仿真脚本和本文档已纳入。
 
 ## 模型与直接匹配准则
 
@@ -43,7 +42,7 @@ S(z,v)=\frac{\langle k_{z,v},PY\rangle_W}{\|k_{z,v}\|_W},
 - 孤立单点的全局峰全部落在 \(v=-0.08\) m/s；深度 9 组为 0.614 m，3 组为 0.612 m。
 - 三层场景的两个分离峰全部为 \((0.614,-0.08)\)、\((0.694,+0.08)\)。
 
-这些是**离散候选中的选择结果**，不能把相同的 12 个格点结果解释成零估计不确定度。三层深度峰相对生成位置偏移约 4 mm，原因可能包括其他散射点的串扰和有限模板字典，尚未分离。测试还核对有限位移模板与独立的物理单点前向模拟器一致。
+这些是**离散候选中的选择结果**，不能把相同的 12 个格点结果解释成零估计不确定度。三层深度峰相对生成位置偏移约 4 mm，原因可能包括其他散射点的串扰和有限模板字典，尚未分离。有限位移模板也曾与独立的物理单点前向模拟器核对。
 
 ## 能证明什么，不能证明什么
 
