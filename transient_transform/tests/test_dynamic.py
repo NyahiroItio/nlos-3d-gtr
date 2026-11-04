@@ -4,6 +4,7 @@ import numpy as np
 
 from transient_transform.motion_simulation import C, confocal_response, glyph_points, layered_glyph_points
 from transient_transform.finite_shift_probe import point_frames
+from transient_transform.coherence_probe import weighted_feature
 from transient_transform.temporal_fit import (AffineTransientEstimator,
     PolynomialTransientEstimator, fit_weights, centered_difference_weights)
 
@@ -93,6 +94,15 @@ class TemporalChecks(unittest.TestCase):
 
 
 class MotionPhysicsChecks(unittest.TestCase):
+    def test_weighted_template_removes_static_transient_nuisance(self):
+        response = np.array([[[2., 4.]], [[5., 1.]], [[7., 6.]]])
+        precision = np.array([[[1., 3.]], [[2., 1.]], [[4., 2.]]])
+        feature = weighted_feature(response, precision).reshape(response.shape)
+        np.testing.assert_allclose(np.sum(feature*np.sqrt(precision), axis=0),
+                                   0., atol=1e-13)
+        static = np.broadcast_to(np.array([[[3., 9.]]]), response.shape)
+        np.testing.assert_allclose(weighted_feature(static, precision), 0., atol=1e-13)
+
     def test_finite_shift_template_matches_independent_point_forward_model(self):
         xy = np.array([.015, -.02])
         wall = np.array([[0., 0., 0.], [.08, -.04, 0.]])
