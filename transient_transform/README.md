@@ -30,7 +30,7 @@ python -m unittest discover -s transient_transform/tests -v
 python -m transient_transform.static_mean
 ```
 
-使用原版 S/U 与漫反射 S 测量作为固定的经验期望，模拟 7 次独立计数曝光，比较原版单帧与 LTAI 静态平均。另有相同总曝光量的原版对照。默认 16 组随机序列，CPU 两个线程；当前测试共 25 项。
+使用原版 S/U 与漫反射 S 测量作为固定的经验期望，模拟 7 次独立计数曝光，比较原版单帧与 LTAI 静态平均。另有相同总曝光量的原版对照。默认 16 组随机序列，CPU 两个线程；当前测试共 27 项。
 
 结果在 `results/static_mean/`，包含重建三视图、噪声缩放图、观测与有符号体积、验证报告。这里验证相对于原版测量的平均估计，不声称消除了该测量自身的噪声或验证了真实密度。方法与判据见 [静态平均验证说明](STATIC_MEAN.md)。
 
@@ -59,6 +59,14 @@ python -m transient_transform.dynamic_demo --cases depth_expansion --frames 5 --
 ```
 
 三层 S 形薄体在深度方向收缩/膨胀。结果另有 `depth_motion.png`、`depth_motion.gif` 与 `depth_derivative.png`，用 \(x\)-\(z\) 剖面显示正面图看不出的轴向运动。此场景的一阶导数总误差约 58.33%，主要由固定 0.2 秒窗口的时间近似偏差造成；详见 [动态验证说明](DYNAMIC_VALIDATION.md)。
+
+单回波的窗口位移相对误差推导和更快平面膨胀的速度扫描：
+
+```powershell
+python -m transient_transform.speed_expansion_study
+```
+
+原始瞬态导数偏差随最外点速度从 0.08 增至 0.40 m/s，由约 11.4% 升至 74.1%，接近轴向场景的 75.7%；见 [回波位移与速度研究](PLANAR_SPEED_STUDY.md)。
 
 基于该实验保存的瞬态，可以复查轴向伸缩先验和点响应位置导数匹配：
 
@@ -114,6 +122,7 @@ python -m transient_transform.window_scan
 | `static_mean.py` | 流式静态均值估计、原版/新版本比较及曝光预算验证 |
 | `temporal_fit.py`、`dynamic_demo.py` | 联合参考/斜率估计、动态对比与动画 |
 | `motion_simulation.py` | 独立的空间点飞行时间与仪器响应模拟 |
+| `speed_expansion_study.py` | 单高斯回波误差公式与平面膨胀速度扫描 |
 | `axial_prior_probe.py` | 轴向层间距估计、输运导数对照和原始瞬态的单点导数匹配 |
 | `finite_shift_probe.py` | 原始五帧瞬态的深度–轴向速度有限位移模板匹配 |
 | `coherence_probe.py` | 理想中继面上点响应字典的深度、速度与横向相干性扫描 |
