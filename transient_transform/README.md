@@ -75,6 +75,14 @@ python -m transient_transform.finite_motion_comparison
 
 0.40 m/s 时，原斜率进入 LCT 后有约 71.4% 的时间导数偏差；两种有限位移模板在同一前向模型下均可校正。离网格 0.37 m/s 和泊松计数结果、强先验边界见 [有限位移模型比较](FINITE_MOTION_COMPARISON.md)。
 
+去掉场景点集、目标坐标和全局膨胀先验，使用通用三维位置—速度点字典的验证：
+
+```powershell
+python -m transient_transform.blind_motion_probe
+```
+
+简单格点单点/双点可检测；未知 S 形多点场景未通过，离网格单点需连续参数拟合才能消除字典误差。留出墙点验证与适用边界见 [去掉形状先验后的验证](BLIND_MOTION_PROBE.md)。
+
 基于该实验保存的瞬态，可以复查轴向伸缩先验和点响应位置导数匹配：
 
 ```powershell
@@ -131,6 +139,7 @@ python -m transient_transform.window_scan
 | `motion_simulation.py` | 独立的空间点飞行时间与仪器响应模拟 |
 | `speed_expansion_study.py` | 单高斯回波误差公式与平面膨胀速度扫描 |
 | `finite_motion_comparison.py` | 原斜率、有限窗口斜率模板和完整五帧模板的受控对照 |
+| `blind_motion_probe.py` | 无场景形状先验的位置—速度点字典、留出墙点及网格误差诊断 |
 | `axial_prior_probe.py` | 轴向层间距估计、输运导数对照和原始瞬态的单点导数匹配 |
 | `finite_shift_probe.py` | 原始五帧瞬态的深度–轴向速度有限位移模板匹配 |
 | `coherence_probe.py` | 理想中继面上点响应字典的深度、速度与横向相干性扫描 |
